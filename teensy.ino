@@ -1,6 +1,7 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <Wire.h>               // I²C library
+#include <math.h>
 
 // Ethernet setup
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
@@ -112,9 +113,9 @@ String getZAxisStatus(int limitUpPin, int limitDownPin, int groundPin) {
 
 // Encoder-based movement detection function
 bool isEncoderMoving() {
-  static int lastEncoderPos = encoderPosition;
-  const int threshold = 1;  // Adjust based on your encoder's sensitivity
-  bool moving = (abs(encoderPosition - lastEncoderPos) > threshold);
+  static float lastEncoderPos = encoderPosition;
+  const float threshold = 1.0f;  // Adjust based on your encoder's sensitivity
+  bool moving = (fabsf(encoderPosition - lastEncoderPos) > threshold);
   lastEncoderPos = encoderPosition;
   return moving;
 }
@@ -511,7 +512,7 @@ void processCommand(String command) {
     }
     String offsetStr = command.substring(startIdx + 1, endIdx);
     int targetOffset = offsetStr.toInt();
-    int delta = targetOffset - encoderPosition;
+    float delta = targetOffset - encoderPosition;
     if (delta == 0) {
       Serial.println("LOG: Already at target offset.");
       if (responseClient && responseClient.connected()) {
@@ -525,26 +526,27 @@ void processCommand(String command) {
       responseClient.println("LOG: Starting PRESET command: Lifting Z2...");
     }
     runZAxis(true, 2); // Lift Z2 upward.
+    int stepCount = (int)fabsf(delta);
     if (delta > 0) {
       Serial.print("LOG: Moving LEFT ");
-      Serial.print(delta);
+      Serial.print(stepCount);
       Serial.println(" steps.");
       if (responseClient && responseClient.connected()) {
         responseClient.print("LOG: Moving LEFT ");
-        responseClient.print(delta);
+        responseClient.print(stepCount);
         responseClient.println(" steps.");
       }
-      runXAxis(delta, false); // Move left.
+      runXAxis(stepCount, false); // Move left.
     } else {
       Serial.print("LOG: Moving RIGHT ");
       Serial.print(-delta);
       Serial.println(" steps.");
       if (responseClient && responseClient.connected()) {
         responseClient.print("LOG: Moving RIGHT ");
-        responseClient.print(-delta);
+        responseClient.print(stepCount);
         responseClient.println(" steps.");
       }
-      runXAxis(-delta, true); // Move right.
+      runXAxis(stepCount, true); // Move right.
     }
     Serial.println("LOG: Lowering Z2 to complete PRESET command.");
     if (responseClient && responseClient.connected()) {
@@ -565,7 +567,7 @@ void readEncoder() {
   Wire1.beginTransmission(AS5600_ADDR);
   Wire1.write(0x0E);
   if (Wire1.endTransmission() != 0) return;
-  Wire1.requestFrom(AS5600_ADDR, (uint8_t)2);
+Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
   if (Wire1.available() < 2) return;
   uint16_t raw = (((uint16_t)Wire1.read() << 8) | Wire1.read()) & 0x0FFF;
   currentAngleDeg = raw * 360.0f / 4096.0f;
@@ -681,9 +683,9 @@ void runZAxisSteps(bool direction, int motor, int steps) {
     if (emergencyStopActive) break;
     
     digitalWrite(stepPin, HIGH);
-    delayMicroseconds(800);
+    delayMicroseconds(500);
     digitalWrite(stepPin, LOW);
-    delayMicroseconds(800);
+    delayMicroseconds(500);
   }
   
   digitalWrite(enablePin, HIGH);
@@ -695,12 +697,27 @@ void runXAxis(int steps, bool direction) {
   isXMotorRunning = true;
   motorStartTime = millis();
   for (int i = 0; i < steps; i++) {
+    if (direction) { // moving right
+      if (digitalRead(LIMIT_RIGHT) == LOW) {
+        Serial.println("Right limit reached. Stopping X movement.");
+        if (responseClient && responseClient.connected())
+          responseClient.println("LOG: Right limit reached. Stopping X movement.");
+        break;
+      }
+    } else { // moving left
+      if (digitalRead(LIMIT_LEFT) == LOW) {
+        Serial.println("Left limit reached. Stopping X movement.");
+        if (responseClient && responseClient.connected())
+          responseClient.println("LOG: Left limit reached. Stopping X movement.");
+        break;
+      }
+    }
     pollCommandForEmergencyStop();
     if (emergencyStopActive) break;
     digitalWrite(STEP_PIN_X, HIGH);
-    delayMicroseconds(100);
+    delayMicroseconds(50);
     digitalWrite(STEP_PIN_X, LOW);
-    delayMicroseconds(100);
+    delayMicroseconds(50);
   }
   digitalWrite(ENABLE_X, HIGH);
 }
@@ -709,7 +726,8 @@ void startHoming() {
   while (digitalRead(LIMIT_LEFT) != LOW) {
     pollCommandForEmergencyStop();
     if (emergencyStopActive) return;
-    
+    // Step right toward the limit switch
+    runXAxis(1, true);
   }
   resetEncoder();
 
@@ -724,7 +742,6 @@ void startHoming() {
     if (emergencyStopActive) return;
     runZAxis(false, 2);
   }
-  runXAxis(1, false);
   
 }
 
