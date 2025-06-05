@@ -21,7 +21,8 @@ status_port = 65433            # Port for continuous status updates
 response_port = 65434          # Port for responses (errors, logs, completions)
 
 persistent_command_socket = None
-default_left_right_steps = 3000
+default_left_right_steps = 8000
+default_up_down_steps = 2000
 
 # Preset positions: preset 1 = 50, preset 2 = 100, ..., preset 9 = 450
 preset_positions = {
@@ -286,7 +287,7 @@ def MOVE_Z2_DOWN():
 
 def move_z1_up_single():
     # Single click sends the command with the additional parameter (e.g., _300)
-    cmd = "MOVE_Z1_UP 300"
+    cmd = "MOVE_Z1_UP "+ str(default_up_down_steps)
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -303,7 +304,7 @@ def move_z1_up_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z1_down_single():
-    cmd = "MOVE_Z1_DOWN 300"
+    cmd = "MOVE_Z1_DOWN "+ str(default_up_down_steps)
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -319,7 +320,7 @@ def move_z1_down_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_up_single():
-    cmd = "MOVE_Z2_UP 300"
+    cmd = "MOVE_Z2_UP "+ str(default_up_down_steps)
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -335,7 +336,7 @@ def move_z2_up_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_down_single():
-    cmd = "MOVE_Z2_DOWN 300"
+    cmd = "MOVE_Z2_DOWN "+ str(default_up_down_steps)
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
