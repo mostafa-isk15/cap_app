@@ -77,8 +77,8 @@ volatile float currentAngleDeg = 0.0;
 float prevAngleDeg    = 0.0;
 long  rotationCount   = 0;          // # of full turns since last home
 volatile float encoderPosition = 0.0; // final linear offset (mm)
-void runZAxis(bool direction, int motor, int steps = -1);
-void runDualZAxis(bool direction, int steps = -1);
+//void runZAxis(bool direction, int motor, int steps = -1);
+//void runDualZAxis(bool direction, int steps = -1);
 
 // Helper function to determine axis status based on limit switches
 String getXAxisStatus() {
@@ -125,7 +125,6 @@ bool isEncoderMoving() {
 void setup() {
  Serial.begin(115200);
  Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
-
 while (!Serial && millis() < 3000);  // ✅ good
   Serial.println("Initializing Ethernet...");
   
@@ -158,6 +157,209 @@ while (!Serial && millis() < 3000);  // ✅ good
 }
 
 // Checks if the incoming command is valid.
+
+
+void readEncoder() {
+  // 1) read raw angle from AS5600
+  Wire1.beginTransmission(AS5600_ADDR);
+  Wire1.write(0x0E);
+  if (Wire1.endTransmission() != 0) return;
+Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
+  if (Wire1.available() < 2) return;
+  uint16_t raw = (((uint16_t)Wire1.read() << 8) | Wire1.read()) & 0x0FFF;
+  currentAngleDeg = raw * 360.0f / 4096.0f;
+
+  // 2) turn‐count detection (handle 359→0 or 0→359 wrap)
+  float delta = currentAngleDeg - prevAngleDeg;
+  if (delta > 180.0f)     rotationCount--;
+  else if (delta < -180.0f) rotationCount++;
+  prevAngleDeg = currentAngleDeg;
+
+  // 3) build absolute angle and convert to linear pos
+  float fullAngle = rotationCount * 360.0f + currentAngleDeg;
+  encoderPosition = fullAngle / 360.0f * ballscrewPitch;
+}
+
+void resetEncoder() {
+  rotationCount = 0;
+  prevAngleDeg  = currentAngleDeg;  // so next delta is from this zero point
+  encoderPosition = 0.0;
+}
+
+/*void detectErrors() {
+  if (isXMotorRunning && millis() - motorStartTime > 3000) {
+    int currentEncoderPosition = encoderPosition;
+    // If the encoder hasn't changed significantly, flag an error.
+    if (currentEncoderPosition == encoderPosition) {
+      Serial.println("ERROR: X-axis motor frozen.");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("ERROR: X-axis motor frozen.");
+      }
+      isXMotorRunning = false;
+    }
+  }
+}
+*/
+void sendStatusUpdate() {
+  if (statusClient && statusClient.connected()) {
+    String status = "{";
+    status += "\"X_axis\":\"" + getXAxisStatus() + "\",";
+    status += "\"offset\":\"" + String(encoderPosition) + "\",";
+    status += "\"home_position\":\"" + String(isHomed ? "Yes" : "No") + "\",";
+    String z1Status = getZAxisStatus(LIMIT_UP_Z1, LIMIT_DOWN_Z1, LIMIT_GROUND_Z1);
+    String z2Status = getZAxisStatus(LIMIT_UP_Z2, LIMIT_DOWN_Z2, LIMIT_GROUND_Z2);
+    status += "\"Z1_axis\":\"" + z1Status + "\",";
+    status += "\"Z2_axis\":\"" + z2Status + "\"}";
+    statusClient.println(status);
+  }
+}
+
+
+void runZAxis(bool direction, int motor, int steps = -1) {
+  int stepPin = (motor == 1) ? STEP_PIN_Z1 : STEP_PIN_Z2;
+  int dirPin = (motor == 1) ? DIR_PIN_Z1 : DIR_PIN_Z2;
+  int enablePin = (motor == 1) ? ENABLE_Z1 : ENABLE_Z2;
+  int limitUp = (motor == 1) ? LIMIT_UP_Z1 : LIMIT_UP_Z2;
+  int limitDown = (motor == 1) ? LIMIT_DOWN_Z1 : LIMIT_DOWN_Z2;
+  int groundLimit = (motor == 1) ? LIMIT_GROUND_Z1 : LIMIT_GROUND_Z2;
+  
+  digitalWrite(dirPin, direction);
+  digitalWrite(enablePin, LOW);
+  
+   int i = 0;
+  while (true) {
+    if (steps >= 0 && i >= steps) break;  // Completed requested steps
+
+    bool limitReached = false;
+    if (direction) {
+      limitReached = (digitalRead(limitUp) == LOW);
+    } else {
+      limitReached = (digitalRead(limitDown) == LOW || digitalRead(groundLimit) == LOW);
+    }
+    if (limitReached) {
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Z-axis limit reached. Stopping movement.");
+      }
+         break;
+    }
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) break;
+    
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(200);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(200);
+    
+    if (steps >= 0) i++;  // Only count steps if steps parameter specified
+  }
+  
+  digitalWrite(enablePin, HIGH);
+}
+// Run both Z motors simultaneously. When 'steps' is negative, move each motor
+// until its respective limit is hit. Otherwise, move the specified number of
+// steps while monitoring the limits.
+void runDualZAxis(bool direction, int steps = -1) {
+  digitalWrite(DIR_PIN_Z1, direction);
+  digitalWrite(DIR_PIN_Z2, direction);
+  digitalWrite(ENABLE_Z1, LOW);
+  digitalWrite(ENABLE_Z2, LOW);
+
+  int i = 0;
+  while (true) {
+    if (steps >= 0 && i >= steps) break;
+
+    bool limit1 = direction ? (digitalRead(LIMIT_UP_Z1) == LOW)
+                            : (digitalRead(LIMIT_DOWN_Z1) == LOW || digitalRead(LIMIT_GROUND_Z1) == LOW);
+    bool limit2 = direction ? (digitalRead(LIMIT_UP_Z2) == LOW)
+                            : (digitalRead(LIMIT_DOWN_Z2) == LOW || digitalRead(LIMIT_GROUND_Z2) == LOW);
+
+    if (steps < 0 && limit1 && limit2) break;
+    if (steps >= 0 && limit1 && limit2 && i >= steps) break;
+
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) break;
+
+    if (!limit1) digitalWrite(STEP_PIN_Z1, HIGH);
+    if (!limit2) digitalWrite(STEP_PIN_Z2, HIGH);
+    delayMicroseconds(200);
+    digitalWrite(STEP_PIN_Z1, LOW);
+    digitalWrite(STEP_PIN_Z2, LOW);
+    delayMicroseconds(200);
+
+    if (steps >= 0) i++;
+    if (steps < 0 && limit1 && limit2) break;
+  }
+
+  digitalWrite(ENABLE_Z1, HIGH);
+  digitalWrite(ENABLE_Z2, HIGH);
+}
+
+void runXAxis(int steps, bool direction) {
+  digitalWrite(DIR_PIN_X, direction);
+  digitalWrite(ENABLE_X, LOW);
+  isXMotorRunning = true;
+  motorStartTime = millis();
+  for (int i = 0; i < steps; i++) {
+    if (direction) { // moving right
+      if (digitalRead(LIMIT_RIGHT) == LOW) {
+        Serial.println("Right limit reached. Stopping X movement.");
+        if (responseClient && responseClient.connected())
+          responseClient.println("LOG: Right limit reached. Stopping X movement.");
+        break;
+      }
+    } else { // moving left
+      if (digitalRead(LIMIT_LEFT) == LOW) {
+        Serial.println("Left limit reached. Stopping X movement.");
+        if (responseClient && responseClient.connected())
+          responseClient.println("LOG: Left limit reached. Stopping X movement.");
+        break;
+      }
+    }
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) break;
+    digitalWrite(STEP_PIN_X, HIGH);
+    delayMicroseconds(200);
+    digitalWrite(STEP_PIN_X, LOW);
+    delayMicroseconds(200);
+  }
+  digitalWrite(ENABLE_X, HIGH);
+}
+
+void startHoming() {
+  while (digitalRead(LIMIT_RIGHT) != LOW) {
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) return;
+    // Step right toward the limit switch
+    runXAxis(1, true);
+  }
+  resetEncoder();
+
+  while (digitalRead(LIMIT_UP_Z1) != LOW) {
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) return;
+    runZAxis(true, 1);
+  }
+  
+  while (digitalRead(LIMIT_UP_Z2) != LOW) {
+    pollCommandForEmergencyStop();
+    if (emergencyStopActive) return;
+    runZAxis(true, 2);
+  }
+  
+}
+
+void executeClearIceCommand() {
+  runXAxis(500, true);  // Move to the end
+  delay(2000);
+  runXAxis(500, false); // Return home
+}
+
+bool detectHomePosition() {
+  bool xHome  = (digitalRead(LIMIT_RIGHT) == LOW);
+  bool z1Home = (digitalRead(LIMIT_UP_Z1) == LOW);
+  bool z2Home = (digitalRead(LIMIT_UP_Z2) == LOW);
+  return (xHome && z1Home && z2Home);
+}
 bool isValidCommand(String command) {
   // Allow PRESET commands by default.
   if (command.startsWith("PRESET(")) {
@@ -560,208 +762,6 @@ void processCommand(String command) {
       }
     
   }
-}
-
-void readEncoder() {
-  // 1) read raw angle from AS5600
-  Wire1.beginTransmission(AS5600_ADDR);
-  Wire1.write(0x0E);
-  if (Wire1.endTransmission() != 0) return;
-Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
-  if (Wire1.available() < 2) return;
-  uint16_t raw = (((uint16_t)Wire1.read() << 8) | Wire1.read()) & 0x0FFF;
-  currentAngleDeg = raw * 360.0f / 4096.0f;
-
-  // 2) turn‐count detection (handle 359→0 or 0→359 wrap)
-  float delta = currentAngleDeg - prevAngleDeg;
-  if (delta > 180.0f)     rotationCount--;
-  else if (delta < -180.0f) rotationCount++;
-  prevAngleDeg = currentAngleDeg;
-
-  // 3) build absolute angle and convert to linear pos
-  float fullAngle = rotationCount * 360.0f + currentAngleDeg;
-  encoderPosition = fullAngle / 360.0f * ballscrewPitch;
-}
-
-void resetEncoder() {
-  rotationCount = 0;
-  prevAngleDeg  = currentAngleDeg;  // so next delta is from this zero point
-  encoderPosition = 0.0;
-}
-
-/*void detectErrors() {
-  if (isXMotorRunning && millis() - motorStartTime > 3000) {
-    int currentEncoderPosition = encoderPosition;
-    // If the encoder hasn't changed significantly, flag an error.
-    if (currentEncoderPosition == encoderPosition) {
-      Serial.println("ERROR: X-axis motor frozen.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("ERROR: X-axis motor frozen.");
-      }
-      isXMotorRunning = false;
-    }
-  }
-}
-*/
-void sendStatusUpdate() {
-  if (statusClient && statusClient.connected()) {
-    String status = "{";
-    status += "\"X_axis\":\"" + getXAxisStatus() + "\",";
-    status += "\"offset\":\"" + String(encoderPosition) + "\",";
-    status += "\"home_position\":\"" + String(isHomed ? "Yes" : "No") + "\",";
-    String z1Status = getZAxisStatus(LIMIT_UP_Z1, LIMIT_DOWN_Z1, LIMIT_GROUND_Z1);
-    String z2Status = getZAxisStatus(LIMIT_UP_Z2, LIMIT_DOWN_Z2, LIMIT_GROUND_Z2);
-    status += "\"Z1_axis\":\"" + z1Status + "\",";
-    status += "\"Z2_axis\":\"" + z2Status + "\"}";
-    statusClient.println(status);
-  }
-}
-
-
-void runZAxis(bool direction, int motor, int steps = -1) {
-  int stepPin = (motor == 1) ? STEP_PIN_Z1 : STEP_PIN_Z2;
-  int dirPin = (motor == 1) ? DIR_PIN_Z1 : DIR_PIN_Z2;
-  int enablePin = (motor == 1) ? ENABLE_Z1 : ENABLE_Z2;
-  int limitUp = (motor == 1) ? LIMIT_UP_Z1 : LIMIT_UP_Z2;
-  int limitDown = (motor == 1) ? LIMIT_DOWN_Z1 : LIMIT_DOWN_Z2;
-  int groundLimit = (motor == 1) ? LIMIT_GROUND_Z1 : LIMIT_GROUND_Z2;
-  
-  digitalWrite(dirPin, direction);
-  digitalWrite(enablePin, LOW);
-  
-   int i = 0;
-  while (true) {
-    if (steps >= 0 && i >= steps) break;  // Completed requested steps
-
-    bool limitReached = false;
-    if (direction) {
-      limitReached = (digitalRead(limitUp) == LOW);
-    } else {
-      limitReached = (digitalRead(limitDown) == LOW || digitalRead(groundLimit) == LOW);
-    }
-    if (limitReached) {
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Z-axis limit reached. Stopping movement.");
-      }
-         break;
-    }
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) break;
-    
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(500);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(500);
-    
-    if (steps >= 0) i++;  // Only count steps if steps parameter specified
-  }
-  
-  digitalWrite(enablePin, HIGH);
-}
-// Run both Z motors simultaneously. When 'steps' is negative, move each motor
-// until its respective limit is hit. Otherwise, move the specified number of
-// steps while monitoring the limits.
-void runDualZAxis(bool direction, int steps = -1) {
-  digitalWrite(DIR_PIN_Z1, direction);
-  digitalWrite(DIR_PIN_Z2, direction);
-  digitalWrite(ENABLE_Z1, LOW);
-  digitalWrite(ENABLE_Z2, LOW);
-
-  int i = 0;
-  while (true) {
-    if (steps >= 0 && i >= steps) break;
-
-    bool limit1 = direction ? (digitalRead(LIMIT_UP_Z1) == LOW)
-                            : (digitalRead(LIMIT_DOWN_Z1) == LOW || digitalRead(LIMIT_GROUND_Z1) == LOW);
-    bool limit2 = direction ? (digitalRead(LIMIT_UP_Z2) == LOW)
-                            : (digitalRead(LIMIT_DOWN_Z2) == LOW || digitalRead(LIMIT_GROUND_Z2) == LOW);
-
-    if (steps < 0 && limit1 && limit2) break;
-    if (steps >= 0 && limit1 && limit2 && i >= steps) break;
-
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) break;
-
-    if (!limit1) digitalWrite(STEP_PIN_Z1, HIGH);
-    if (!limit2) digitalWrite(STEP_PIN_Z2, HIGH);
-    delayMicroseconds(800);
-    digitalWrite(STEP_PIN_Z1, LOW);
-    digitalWrite(STEP_PIN_Z2, LOW);
-    delayMicroseconds(800);
-
-    if (steps >= 0) i++;
-    if (steps < 0 && limit1 && limit2) break;
-  }
-
-  digitalWrite(ENABLE_Z1, HIGH);
-  digitalWrite(ENABLE_Z2, HIGH);
-}
-
-void runXAxis(int steps, bool direction) {
-  digitalWrite(DIR_PIN_X, direction);
-  digitalWrite(ENABLE_X, LOW);
-  isXMotorRunning = true;
-  motorStartTime = millis();
-  for (int i = 0; i < steps; i++) {
-    if (direction) { // moving right
-      if (digitalRead(LIMIT_RIGHT) == LOW) {
-        Serial.println("Right limit reached. Stopping X movement.");
-        if (responseClient && responseClient.connected())
-          responseClient.println("LOG: Right limit reached. Stopping X movement.");
-        break;
-      }
-    } else { // moving left
-      if (digitalRead(LIMIT_LEFT) == LOW) {
-        Serial.println("Left limit reached. Stopping X movement.");
-        if (responseClient && responseClient.connected())
-          responseClient.println("LOG: Left limit reached. Stopping X movement.");
-        break;
-      }
-    }
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) break;
-    digitalWrite(STEP_PIN_X, HIGH);
-    delayMicroseconds(200);
-    digitalWrite(STEP_PIN_X, LOW);
-    delayMicroseconds(200);
-  }
-  digitalWrite(ENABLE_X, HIGH);
-}
-
-void startHoming() {
-  while (digitalRead(LIMIT_RIGHT) != LOW) {
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) return;
-    // Step right toward the limit switch
-    runXAxis(1, true);
-  }
-  resetEncoder();
-
-  while (digitalRead(LIMIT_UP_Z1) != LOW) {
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) return;
-    runZAxis(true, 1);
-  }
-  
-  while (digitalRead(LIMIT_UP_Z2) != LOW) {
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) return;
-    runZAxis(true, 2);
-  }
-  
-}
-
-void executeClearIceCommand() {
-  runXAxis(500, true);  // Move to the end
-  delay(2000);
-  runXAxis(500, false); // Return home
-}
-
-bool detectHomePosition() {
-  bool xHome  = (digitalRead(LIMIT_RIGHT) == LOW);
-  bool z1Home = (digitalRead(LIMIT_UP_Z1) == LOW);
-  bool z2Home = (digitalRead(LIMIT_UP_Z2) == LOW);
-  return (xHome && z1Home && z2Home);
 }
 
 void loop() {
