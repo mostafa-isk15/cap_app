@@ -21,21 +21,22 @@ status_port = 65433            # Port for continuous status updates
 response_port = 65434          # Port for responses (errors, logs, completions)
 
 persistent_command_socket = None
-default_left_right_steps = 8000
+default_left_right_steps = 1000
 default_up_down_steps = 2000
 
 # Preset positions: preset 1 = 50, preset 2 = 100, ..., preset 9 = 450
 preset_positions = {
-    1: {"offset": 50,  "home_position": "No"},
-    2: {"offset": 100, "home_position": "No"},
-    3: {"offset": 150, "home_position": "No"},
-    4: {"offset": 200, "home_position": "No"},
-    5: {"offset": 250, "home_position": "No"},
-    6: {"offset": 300, "home_position": "No"},
-    7: {"offset": 350, "home_position": "No"},
-    8: {"offset": 400, "home_position": "No"},
-    9: {"offset": 450, "home_position": "No"}
+    1: {"offset": 500,  "home_position": "No"},
+    2: {"offset": 1000, "home_position": "No"},
+    3: {"offset": 1500, "home_position": "No"},
+    4: {"offset": 2000, "home_position": "No"},
+    5: {"offset": 2500, "home_position": "No"},
+    6: {"offset": 3000, "home_position": "No"},
+    7: {"offset": 3500, "home_position": "No"},
+    8: {"offset": 4000, "home_position": "No"},
+    9: {"offset": 4500, "home_position": "No"}
 }
+# Tracks the latest offset reported by the robot via status messages.
 current_offset = 0
 
 # Queues for asynchronous status and response messages
@@ -251,6 +252,38 @@ def move_motor(direction):
         cmd = "MOVE_LEFT " + str(default_left_right_steps)
     elif direction == "RIGHT":
         cmd = "MOVE_RIGHT " + str(default_left_right_steps)
+    response = send_command(cmd)
+    if response.startswith("Error"):
+        messagebox.showerror("Error", response)
+    else:
+        log_message(f"Sent Command: {cmd}")
+
+def move_left_single():
+    cmd = "MOVE_LEFT " + str(default_left_right_steps)
+    response = send_command(cmd)
+    if response.startswith("Error"):
+        messagebox.showerror("Error", response)
+    else:
+        log_message(f"Sent Command: {cmd}")
+
+def move_left_double():
+    cmd = "MOVE_LEFT"
+    response = send_command(cmd)
+    if response.startswith("Error"):
+        messagebox.showerror("Error", response)
+    else:
+        log_message(f"Sent Command: {cmd}")
+
+def move_right_single():
+    cmd = "MOVE_RIGHT " + str(default_left_right_steps)
+    response = send_command(cmd)
+    if response.startswith("Error"):
+        messagebox.showerror("Error", response)
+    else:
+        log_message(f"Sent Command: {cmd}")
+
+def move_right_double():
+    cmd = "MOVE_RIGHT"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -486,6 +519,29 @@ def on_z2_down_double_click(event):
         widget.single_click_timer = None
     move_z2_down_double()
 
+# For Left movement button
+def on_left_click(event):
+    widget = event.widget
+    widget.single_click_timer = widget.after(250, move_left_single)
+
+def on_left_double_click(event):
+    widget = event.widget
+    if hasattr(widget, 'single_click_timer'):
+        widget.after_cancel(widget.single_click_timer)
+        widget.single_click_timer = None
+    move_left_double()
+
+# For Right movement button
+def on_right_click(event):
+    widget = event.widget
+    widget.single_click_timer = widget.after(250, move_right_single)
+
+def on_right_double_click(event):
+    widget = event.widget
+    if hasattr(widget, 'single_click_timer'):
+        widget.after_cancel(widget.single_click_timer)
+        widget.single_click_timer = None
+    move_right_double()
 
 # ------------------------ PROFILE FUNCTIONS ------------------------
 def save_profiles_to_file():
@@ -717,9 +773,15 @@ move_frame = tk.Frame(manual_control_frame)
 move_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky='nsew')
 tk.Label(move_frame, text="Move:").grid(row=0, column=1, pady=5)
 tk.Button(move_frame, text="↑", command=lambda: move_motor("UP")).grid(row=1, column=1, padx=5, pady=5, sticky='nsew')
-tk.Button(move_frame, text="←", command=lambda: move_motor("LEFT")).grid(row=2, column=0, padx=5, pady=5, sticky='nsew')
+btn_left = tk.Button(move_frame, text="←")
+btn_left.grid(row=2, column=0, padx=5, pady=5, sticky='nsew')
+btn_left.bind("<Button-1>", on_left_click)
+btn_left.bind("<Double-Button-1>", on_left_double_click)
 tk.Button(move_frame, text="↓", command=lambda: move_motor("DOWN")).grid(row=2, column=1, padx=5, pady=5, sticky='nsew')
-tk.Button(move_frame, text="→", command=lambda: move_motor("RIGHT")).grid(row=2, column=2, padx=5, pady=5, sticky='nsew')
+btn_right = tk.Button(move_frame, text="→")
+btn_right.grid(row=2, column=2, padx=5, pady=5, sticky='nsew')
+btn_right.bind("<Button-1>", on_right_click)
+btn_right.bind("<Double-Button-1>", on_right_double_click)
 
 # Z-Axis Controls
 z_axis_frame = tk.Frame(manual_control_frame)
