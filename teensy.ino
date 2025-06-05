@@ -74,11 +74,11 @@ unsigned long motorStartTime = 0;
 bool isXMotorRunning = false;
 const float ballscrewPitch = 10;   // mm per revolution (adjust to your screw)
 volatile float currentAngleDeg = 0.0;
-float prevAngleDeg    = 0.0;
+float prevZeroedAngle = 0.0;     // angle offset from home at previous read
 long  rotationCount   = 0;          // # of full turns since last home
-volatile float encoderPosition = 0.0; // final linear offset (mm)
-//void runZAxis(bool direction, int motor, int steps = -1);
-//void runDualZAxis(bool direction, int steps = -1);
+volatile float offset = 0.0; // final linear offset (mm)
+float encoderZeroAngle = 0.0;    
+const float STEPS_PER_MM = 100.0; 
 
 // Helper function to determine axis status based on limit switches
 String getXAxisStatus() {
@@ -115,10 +115,10 @@ String getZAxisStatus(int limitUpPin, int limitDownPin, int groundPin) {
 
 // Encoder-based movement detection function
 bool isEncoderMoving() {
-  static float lastEncoderPos = encoderPosition;
+  static float lastEncoderPos = offset;
   const float threshold = 1.0f;  // Adjust based on your encoder's sensitivity
-  bool moving = (fabsf(encoderPosition - lastEncoderPos) > threshold);
-  lastEncoderPos = encoderPosition;
+  bool moving = (fabsf(offset - lastEncoderPos) > threshold);
+  lastEncoderPos = offset;
   return moving;
 }
 
@@ -164,33 +164,38 @@ void readEncoder() {
   Wire1.beginTransmission(AS5600_ADDR);
   Wire1.write(0x0E);
   if (Wire1.endTransmission() != 0) return;
-Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
+  Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
   if (Wire1.available() < 2) return;
   uint16_t raw = (((uint16_t)Wire1.read() << 8) | Wire1.read()) & 0x0FFF;
   currentAngleDeg = raw * 360.0f / 4096.0f;
 
-  // 2) turn‐count detection (handle 359→0 or 0→359 wrap)
-  float delta = currentAngleDeg - prevAngleDeg;
+  // 2) adjust angle so that home position is zero
+  float zeroedAngle = currentAngleDeg - encoderZeroAngle;
+  if (zeroedAngle < 0) zeroedAngle += 360.0f;
+
+  // 3) turn-count detection using zeroed angle
+  float delta = zeroedAngle - prevZeroedAngle;
   if (delta > 180.0f)     rotationCount--;
   else if (delta < -180.0f) rotationCount++;
-  prevAngleDeg = currentAngleDeg;
+  prevZeroedAngle = zeroedAngle;
 
-  // 3) build absolute angle and convert to linear pos
-  float fullAngle = rotationCount * 360.0f + currentAngleDeg;
-  encoderPosition = fullAngle / 360.0f * ballscrewPitch;
+  // 4) compute linear position relative to home
+  float fullAngle = rotationCount * 360.0f + zeroedAngle;
+  float relativeAngle = fullAngle - encoderZeroAngle;  // offset from home
+  offset = relativeAngle / 360.0f * ballscrewPitch;
 }
 
 void resetEncoder() {
   rotationCount = 0;
-  prevAngleDeg  = currentAngleDeg;  // so next delta is from this zero point
-  encoderPosition = 0.0;
+  prevZeroedAngle = 0.0;             // zeroed angle is now at 0
+  encoderZeroAngle = currentAngleDeg; // record the absolute home angle
+  offset = 0.0;
 }
-
 /*void detectErrors() {
   if (isXMotorRunning && millis() - motorStartTime > 3000) {
-    int currentEncoderPosition = encoderPosition;
+    int currentoffset = offset;
     // If the encoder hasn't changed significantly, flag an error.
-    if (currentEncoderPosition == encoderPosition) {
+    if (currentoffset == offset) {
       Serial.println("ERROR: X-axis motor frozen.");
       if (responseClient && responseClient.connected()) {
         responseClient.println("ERROR: X-axis motor frozen.");
@@ -204,7 +209,7 @@ void sendStatusUpdate() {
   if (statusClient && statusClient.connected()) {
     String status = "{";
     status += "\"X_axis\":\"" + getXAxisStatus() + "\",";
-    status += "\"offset\":\"" + String(encoderPosition) + "\",";
+    status += "\"offset\":\"" + String(offset) + "\",";
     status += "\"home_position\":\"" + String(isHomed ? "Yes" : "No") + "\",";
     String z1Status = getZAxisStatus(LIMIT_UP_Z1, LIMIT_DOWN_Z1, LIMIT_GROUND_Z1);
     String z2Status = getZAxisStatus(LIMIT_UP_Z2, LIMIT_DOWN_Z2, LIMIT_GROUND_Z2);
@@ -326,26 +331,18 @@ void runXAxis(int steps, bool direction) {
 }
 
 void startHoming() {
+  // First raise both Z axes simultaneously to their upper limits
+  runDualZAxis(true);
+
+  // Then move X axis to the right (home) limit
   while (digitalRead(LIMIT_RIGHT) != LOW) {
     pollCommandForEmergencyStop();
     if (emergencyStopActive) return;
-    // Step right toward the limit switch
     runXAxis(1, true);
   }
+  
+  // Reset encoder after reaching X home
   resetEncoder();
-
-  while (digitalRead(LIMIT_UP_Z1) != LOW) {
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) return;
-    runZAxis(true, 1);
-  }
-  
-  while (digitalRead(LIMIT_UP_Z2) != LOW) {
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) return;
-    runZAxis(true, 2);
-  }
-  
 }
 
 void executeClearIceCommand() {
@@ -470,12 +467,12 @@ void processCommand(String command) {
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_LEFT...");
     }
-    int steps = 20; // Default value
+    int steps = 20000; // Default value
     int spaceIndex = command.indexOf(' ');
     if (spaceIndex > 0) {
       String stepStr = command.substring(spaceIndex + 1);
       steps = stepStr.toInt();
-      if (steps <= 0) steps = 20;
+      if (steps <= 0) steps = 200000;
     }
     runXAxis(steps, false);
     Serial.println("LOG: Done MOVE_LEFT");
@@ -498,7 +495,7 @@ void processCommand(String command) {
     if (spaceIndex > 0) {
       String stepStr = command.substring(spaceIndex + 1);
       steps = stepStr.toInt();
-      if (steps <= 0) steps = 20;
+      if (steps <= 0) steps = 200000;
     }
     runXAxis(steps, true);
     Serial.println("LOG: Done MOVE_RIGHT");
@@ -713,9 +710,13 @@ void processCommand(String command) {
       return;
     }
     String offsetStr = command.substring(startIdx + 1, endIdx);
-    int targetOffset = offsetStr.toInt();
-    float delta = targetOffset - encoderPosition;
-    if (delta == 0) {
+    int targetOffsetSteps = offsetStr.toInt();
+
+    // Convert current encoder position (in mm) to steps for accurate delta
+    float currentSteps = offset * STEPS_PER_MM;
+    float deltaSteps = targetOffsetSteps - currentSteps;
+
+    if (deltaSteps == 0) {
       Serial.println("LOG: Already at target offset.");
       if (responseClient && responseClient.connected()) {
         responseClient.println("LOG: Already at target offset.");
@@ -728,8 +729,8 @@ void processCommand(String command) {
       responseClient.println("LOG: Starting PRESET command: Lifting Z2...");
     }
     runZAxis(true, 2); // Lift Z2 upward.
-    int stepCount = (int)fabsf(delta);
-    if (delta > 0) {
+    int stepCount = (int)fabsf(deltaSteps);
+    if (deltaSteps > 0) {
       Serial.print("LOG: Moving LEFT ");
       Serial.print(stepCount);
       Serial.println(" steps.");
@@ -741,7 +742,7 @@ void processCommand(String command) {
       runXAxis(stepCount, false); // Move left.
     } else {
       Serial.print("LOG: Moving RIGHT ");
-      Serial.print(-delta);
+      Serial.print(stepCount);
       Serial.println(" steps.");
       if (responseClient && responseClient.connected()) {
         responseClient.print("LOG: Moving RIGHT ");
