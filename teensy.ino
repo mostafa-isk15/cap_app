@@ -65,6 +65,7 @@ const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
 //#define ENCODER_SCL 37
 //#define ENCODER_SDA 38
 #define AS5600_ADDR  0x36       // AS5600 I2C address
+#define NANO_ADDR  0x40    // I²C address of Nano 33 BLE
 
 // System State Variables
 String activeCommand = "";
@@ -73,11 +74,10 @@ bool isHomed = false; // Global home position flag
 unsigned long motorStartTime = 0;
 bool isXMotorRunning = false;
 const float ballscrewPitch = 10;   // mm per revolution (adjust to your screw)
-volatile float currentAngleDeg = 0.0;
-float prevZeroedAngle = 0.0;     // angle offset from home at previous read
-long  rotationCount   = 0;          // # of full turns since last home
-volatile float offset = 0.0; // final linear offset (mm)
-float encoderZeroAngle = 0.0;    
+float totalAngle = 0.0;            // absolute angle received from Nano
+float angularvelocity   = 0.0;            // angular velocity from Nano
+volatile float offset = 0.0;       // final linear offset (mm)
+float encoderZeroAngle = 0.0;  
 const float STEPS_PER_MM = 100.0; 
 
 // Helper function to determine axis status based on limit switches
@@ -125,6 +125,7 @@ bool isEncoderMoving() {
 void setup() {
  Serial.begin(115200);
  Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
+ Serial6.begin(115200); // communication with Nano over Serial6 (RX on pin 24)
 while (!Serial && millis() < 3000);  // ✅ good
   Serial.println("Initializing Ethernet...");
   
@@ -160,35 +161,20 @@ while (!Serial && millis() < 3000);  // ✅ good
 
 
 void readEncoder() {
-  // 1) read raw angle from AS5600
-  Wire1.beginTransmission(AS5600_ADDR);
-  Wire1.write(0x0E);
-  if (Wire1.endTransmission() != 0) return;
-  Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
-  if (Wire1.available() < 2) return;
-  uint16_t raw = (((uint16_t)Wire1.read() << 8) | Wire1.read()) & 0x0FFF;
-  currentAngleDeg = raw * 360.0f / 4096.0f;
+  // Receive continuous angle and velocity from the Nano
+  if (Serial6.available() >= sizeof(float) * 2) {
+    Serial6.readBytes((char*)&totalAngle, sizeof(float));
+    Serial6.readBytes((char*)&angularvelocity,   sizeof(float));
 
-  // 2) adjust angle so that home position is zero
-  float zeroedAngle = currentAngleDeg - encoderZeroAngle;
-  if (zeroedAngle < 0) zeroedAngle += 360.0f;
+    // Convert the received angle to linear offset relative to home
+    float relativeAngle = totalAngle - encoderZeroAngle;
+    offset = relativeAngle / 360.0f * ballscrewPitch;
 
-  // 3) turn-count detection using zeroed angle
-  float delta = zeroedAngle - prevZeroedAngle;
-  if (delta > 180.0f)     rotationCount--;
-  else if (delta < -180.0f) rotationCount++;
-  prevZeroedAngle = zeroedAngle;
-
-  // 4) compute linear position relative to home
-  float fullAngle = rotationCount * 360.0f + zeroedAngle;
-  float relativeAngle = fullAngle - encoderZeroAngle;  // offset from home
-  offset = relativeAngle / 360.0f * ballscrewPitch;
+  }
 }
 
 void resetEncoder() {
-  rotationCount = 0;
-  prevZeroedAngle = 0.0;             // zeroed angle is now at 0
-  encoderZeroAngle = currentAngleDeg; // record the absolute home angle
+  encoderZeroAngle = totalAngle;  // record the absolute home angle
   offset = 0.0;
 }
 /*void detectErrors() {
@@ -490,7 +476,7 @@ void processCommand(String command) {
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_RIGHT...");
     }
-    int steps = 20; // Default value
+    int steps = 20000; // Default value
     int spaceIndex = command.indexOf(' ');
     if (spaceIndex > 0) {
       String stepStr = command.substring(spaceIndex + 1);
