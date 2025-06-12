@@ -9,7 +9,7 @@ float    lastTotal     = 0;
 unsigned long lastTime = 0;
 
 float totalAngle = 0.0f;
-float angularvelocity   = 0.0f;
+float angularvelocity = 0.0f;
 
 uint16_t readRawAngle() {
   Wire.beginTransmission(AS5600_ADDR);
@@ -22,12 +22,10 @@ uint16_t readRawAngle() {
 }
 
 void setup() {
-  Serial.begin(115200);    // USB Serial (to laptop)
-  Serial1.begin(115200);   // UART Serial1 (to Teensy via TX/RX)
+  Serial.begin(115200);    // USB debug
+  Serial1.begin(115200);   // TX1 → Teensy RX1
   Wire.begin();
-
-  while (!Serial);         // wait for USB serial
-
+  while (!Serial);
   lastRaw   = readRawAngle();
   lastTotal = lastRaw * SCALE;
   lastTime  = micros();
@@ -47,20 +45,13 @@ void loop() {
   float dt = (now - lastTime) * 1e-6f;
   angularvelocity = (totalAngle - lastTotal) / dt;
 
-  // Print to USB Serial (laptop)
-  Serial.print("Angle: ");
-  Serial.print(totalAngle, 2);
-  Serial.print(" deg,  angularvelocity: ");
-  Serial.print(angularvelocity, 2);
-  Serial.println(" deg/s");
-
-  // Send binary to Teensy (8 bytes total)
-  Serial1.write((uint8_t*)&totalAngle, sizeof(totalAngle));
-  Serial1.write((uint8_t*)&angularvelocity,   sizeof(angularvelocity));
+  // send sync + two floats
+  Serial1.write(0xFF);  
+  Serial1.write((uint8_t*)&totalAngle,    sizeof(totalAngle));
+  Serial1.write((uint8_t*)&angularvelocity, sizeof(angularvelocity));
 
   lastRaw   = raw;
   lastTotal = totalAngle;
   lastTime  = now;
-
   delay(100);
 }
