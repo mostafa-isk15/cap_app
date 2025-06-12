@@ -41,14 +41,15 @@ const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
 // Motor and sensor pins
 #define STEP_PIN_Z1 2
 #define DIR_PIN_Z1 3
+#define ENABLE_Z1 6
+
 #define STEP_PIN_Z2 4
 #define DIR_PIN_Z2 5
-#define ENABLE_Z1 6
 #define ENABLE_Z2 7
 
 #define STEP_PIN_X 8
 #define DIR_PIN_X 9
-#define ENABLE_X 24
+#define ENABLE_X 26 // not used
 
 // Limit switch pins
 #define LIMIT_UP_Z1 14
@@ -64,7 +65,7 @@ const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
 // AS5600 Encoder pins
 //#define ENCODER_SCL 37
 //#define ENCODER_SDA 38
-#define AS5600_ADDR  0x36       // AS5600 I2C address
+//#define AS5600_ADDR  0x36       // AS5600 I2C address
 #define NANO_ADDR  0x40    // I²C address of Nano 33 BLE
 
 // System State Variables
@@ -75,7 +76,8 @@ unsigned long motorStartTime = 0;
 bool isXMotorRunning = false;
 const float ballscrewPitch = 10;   // mm per revolution (adjust to your screw)
 float totalAngle = 0.0;            // absolute angle received from Nano
-float angularvelocity   = 0.0;            // angular velocity from Nano
+float angularVelocity = 0.0;            // angular velocity from Nano
+const uint8_t SYNC = 0xFF;
 volatile float offset = 0.0;       // final linear offset (mm)
 float encoderZeroAngle = 0.0;  
 const float STEPS_PER_MM = 100.0; 
@@ -125,7 +127,7 @@ bool isEncoderMoving() {
 void setup() {
  Serial.begin(115200);
  Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
- Serial6.begin(115200); // communication with Nano over Serial6 (RX on pin 24)
+ Serial1.begin(115200); // communication with Nano over Serial1 (RX on pin 24)
 while (!Serial && millis() < 3000);  // ✅ good
   Serial.println("Initializing Ethernet...");
   
@@ -162,15 +164,18 @@ while (!Serial && millis() < 3000);  // ✅ good
 
 void readEncoder() {
   // Receive continuous angle and velocity from the Nano
-  if (Serial6.available() >= sizeof(float) * 2) {
-    Serial6.readBytes((char*)&totalAngle, sizeof(float));
-    Serial6.readBytes((char*)&angularvelocity,   sizeof(float));
+  if (Serial1.available() && Serial1.peek() == SYNC) {
+    Serial1.read();  // consume marker
+    // wait for 8 bytes (two floats)
+  while (Serial1.available() < int(sizeof(float) * 2)) { }
+    Serial1.readBytes((char*)&totalAngle,    sizeof(totalAngle));
+    Serial1.readBytes((char*)&angularVelocity, sizeof(angularVelocity));
 
     // Convert the received angle to linear offset relative to home
     float relativeAngle = totalAngle - encoderZeroAngle;
     offset = relativeAngle / 360.0f * ballscrewPitch;
-
   }
+
 }
 
 void resetEncoder() {
