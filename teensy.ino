@@ -163,11 +163,13 @@ while (!Serial && millis() < 3000);  // ✅ good
 
 
 void readEncoder() {
+  static bool lastHomedState = false; // Track previous homing state
+
   // Receive continuous angle and velocity from the Nano
   if (Serial1.available() && Serial1.peek() == SYNC) {
     Serial1.read();  // consume marker
     // wait for 8 bytes (two floats)
-  while (Serial1.available() < int(sizeof(float) * 2)) { }
+    while (Serial1.available() < int(sizeof(float) * 2)) { }
     Serial1.readBytes((char*)&totalAngle,    sizeof(totalAngle));
     Serial1.readBytes((char*)&angularVelocity, sizeof(angularVelocity));
 
@@ -176,12 +178,14 @@ void readEncoder() {
     offset = relativeAngle / 360.0f * ballscrewPitch;
   }
 
+  // Automatically reset encoder when homing is detected
+  if (isHomed && !lastHomedState) {
+    encoderZeroAngle = totalAngle;  // record the absolute home angle
+    offset = 0.0;
+  }
+  lastHomedState = isHomed;
 }
 
-void resetEncoder() {
-  encoderZeroAngle = totalAngle;  // record the absolute home angle
-  offset = 0.0;
-}
 /*void detectErrors() {
   if (isXMotorRunning && millis() - motorStartTime > 3000) {
     int currentoffset = offset;
@@ -331,9 +335,6 @@ void startHoming() {
     if (emergencyStopActive) return;
     runXAxis(1, true);
   }
-  
-  // Reset encoder after reaching X home
-  resetEncoder();
 }
 
 void executeClearIceCommand() {
