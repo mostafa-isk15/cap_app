@@ -25,7 +25,10 @@ void setup() {
   Serial.begin(115200);    // USB debug
   Serial1.begin(115200);   // TX1 → Teensy RX1
   Wire.begin();
-  while (!Serial);
+  unsigned long waitStart = millis();
+  while (!Serial && (millis() - waitStart < 3000)) {
+    ; // wait up to 3 seconds for a host connection
+  }
   lastRaw   = readRawAngle();
   lastTotal = lastRaw * SCALE;
   lastTime  = micros();
