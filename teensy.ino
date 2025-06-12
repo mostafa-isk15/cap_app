@@ -182,6 +182,7 @@ void readEncoder() {
     encoderZeroAngle = totalAngle;  // record the absolute home angle
     offset = 0.0f;
   }
+}
 /*void detectErrors() {
   if (isXMotorRunning && millis() - motorStartTime > 3000) {
     int currentoffset = offset;
