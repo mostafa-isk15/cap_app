@@ -328,18 +328,17 @@ void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
   digitalWrite(ENABLE_X, HIGH);
 }
 
-void startHoming() {
+void startHoming(int stepDelayUs = 200) {
   // First raise both Z axes simultaneously to their upper limits
-  runDualZAxis(true);
+  runDualZAxis(true, -1, stepDelayUs);
 
   // Then move X axis to the right (home) limit
   while (digitalRead(LIMIT_RIGHT) != LOW) {
     pollCommandForEmergencyStop();
     if (emergencyStopActive) return;
-    runXAxis(1, true);
+    runXAxis(1, true, stepDelayUs);
   }
 }
-
 void executeClearIceCommand() {
   runXAxis(500, true);  // Move to the end
   delay(2000);
@@ -533,36 +532,48 @@ void processCommand(String command) {
     delay(100);  // Short delay to process the stop
     emergencyStopActive = false; // Reset for future commands
 
-  } else if (command == "HOME") {
+  } else if (command.startsWith("HOME")) {
+    int speed = 50;
+    String params = command.substring(String("HOME").length());
+    params.trim();
+    if (params.startsWith("v")) speed = params.substring(1).toInt();
     Serial.println("LOG: Starting HOMING...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting HOMING...");
     }
-    startHoming();
+    startHoming(speedToDelayUs(speed));
     Serial.println("LOG: Done HOMING");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done HOMING");
     }
     activeCommand = "";
     
-  } else if (command == "MOVE_UP") {  // Generic MOVE_UP: move both Z axes upward.
+  } else if (command.startsWith("MOVE_UP")) {  // Generic MOVE_UP: move both Z axes upward.
+    int speed = 50;
+    String params = command.substring(String("MOVE_UP").length());
+    params.trim();
+    if (params.startsWith("v")) speed = params.substring(1).toInt();
     Serial.println("LOG: Starting MOVE_UP...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_UP...");
     }
-    runDualZAxis(true);  // Move both Z axes upward simultaneously.
+    runDualZAxis(true, -1, speedToDelayUs(speed));  // Move both Z axes upward simultaneously.
     Serial.println("LOG: Done MOVE_UP");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_UP");
     }
     activeCommand = "";
     return;
-  } else if (command == "MOVE_DOWN") {  // Generic MOVE_DOWN: move both Z axes downward.
+  } else if (command.startsWith("MOVE_DOWN")) {  // Generic MOVE_DOWN: move both Z axes downward.
+    int speed = 50;
+    String params = command.substring(String("MOVE_DOWN").length());
+    params.trim();
+    if (params.startsWith("v")) speed = params.substring(1).toInt();
     Serial.println("LOG: Starting MOVE_DOWN...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_DOWN...");
     }
-    runDualZAxis(false); // Move both Z axes downward simultaneously.
+    runDualZAxis(false, -1, speedToDelayUs(speed)); // Move both Z axes downward simultaneously.
     Serial.println("LOG: Done MOVE_DOWN");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_DOWN");
