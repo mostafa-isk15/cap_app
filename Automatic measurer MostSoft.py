@@ -12,7 +12,7 @@ import win32gui
 import win32con
 
 # Global event that will be set when a preset command completes.
-preset_done_event = threading.Event()
+preset_homing_done_event = threading.Event()
 
 # ------------------------ GLOBAL SETTINGS ------------------------
 teensy_ip = "10.0.7.80"  # Teensy IP address
@@ -24,18 +24,21 @@ persistent_command_socket = None
 default_left_right_steps = 1000
 default_up_down_steps = 2000
 
-# Preset positions: preset 1 = 50, preset 2 = 100, ..., preset 9 = 450
+# Default step between preset positions
+preset_offset_step = 500
+
+# Preset positions dictionary populated from preset_offset_step
 preset_positions = {
-    1: {"offset": 500,  "home_position": "No"},
-    2: {"offset": 1000, "home_position": "No"},
-    3: {"offset": 1500, "home_position": "No"},
-    4: {"offset": 2000, "home_position": "No"},
-    5: {"offset": 2500, "home_position": "No"},
-    6: {"offset": 3000, "home_position": "No"},
-    7: {"offset": 3500, "home_position": "No"},
-    8: {"offset": 4000, "home_position": "No"},
-    9: {"offset": 4500, "home_position": "No"}
+    i: {"offset": i * preset_offset_step, "home_position": "No"}
+    for i in range(1, 10)
 }
+# Update preset_positions when the offset step changes
+def update_preset_positions(new_step):
+    global preset_offset_step
+    preset_offset_step = new_step
+    for i in range(1, 10):
+        preset_positions[i]["offset"] = i * preset_offset_step
+
 # Tracks the latest offset reported by the robot via status messages.
 current_offset = 0
 
@@ -116,7 +119,7 @@ def listen_for_responses():
             
             # Check for either the homing or preset completion replies.
             if "Done HOMING" in response_message or "PRESET command done" in response_message:
-                preset_done_event.set()
+                preset_homing_done_event.set()
                 #log_message("Received movement confirmation from robot.")
             
             response_queue.put(response_message)
@@ -576,10 +579,10 @@ def load_profile(event):
         num_measures_entry_auto.insert(0, profiles_data[selected_profile].get("num_measures", ""))
 
 
-def wait_for_preset_done(timeout=15):
-    preset_done_event.clear()  # Reset the event before waiting.
+def wait_for_preset_homing_done(timeout=15):
+    preset_homing_done_event.clear()  # Reset the event before waiting.
     log_message("Waiting for robot's movement confirmation...")
-    if not preset_done_event.wait(timeout):
+    if not preset_homing_done_event.wait(timeout):
         log_message("Timeout waiting for robot movement confirmation!")
     else:
         log_message("Robot movement confirmed.")
@@ -711,17 +714,27 @@ def start_cmu_control():
         if measure_index == 0:
             response = send_command("HOME")
             log_message("Sent HOME command for first measurement.")
+            # Wait for homing to finish before continuing
+            wait_for_preset_homing_done()
+            # Lower Z2 before the very first measurement
+            send_command("MOVE_Z2_DOWN")
+            log_message("Sent MOVE_Z2_DOWN after homing.")
+            time.sleep(1)
         else:
             current_offset += step_increment
             cmd = f"PRESET({current_offset})"
             response = send_command(cmd)
             log_message(f"Sent command: {cmd} for measurement #{measure_index + 1}.")
+            # Wait until the Teensy confirms movement is complete.
+            wait_for_preset_homing_done()
 
-        # Wait until the Teensy confirms movement is complete.
-        wait_for_preset_done()
         # Now trigger the capacitance measurement automation.
         measure_capacitance()
 
+    # After all measurements, return to the home position
+    send_command("HOME")
+    log_message("Sent HOME command after measurement sequence.")
+    wait_for_preset_homing_done()
     log_message("CMU control measurement sequence complete.")
 
 def start_measurement():
@@ -853,6 +866,26 @@ num_measures_entry_auto = tk.Entry(parameters_frame)
 num_measures_entry_auto.grid(row=4, column=1, padx=10, pady=5, sticky='ew')
 tk.Button(parameters_frame, text="Save Profile", command=save_profile)\
     .grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky='ew')
+
+# ------------------------ ADVANCED TAB ------------------------
+advanced_frame = Frame(notebook)
+notebook.add(advanced_frame, text="Advanced")
+
+tk.Label(advanced_frame, text="Preset Offset Step:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
+preset_offset_entry = tk.Entry(advanced_frame)
+preset_offset_entry.insert(0, str(preset_offset_step))
+preset_offset_entry.grid(row=0, column=1, padx=10, pady=10, sticky='ew')
+
+def apply_preset_offset():
+    try:
+        new_step = int(preset_offset_entry.get())
+        update_preset_positions(new_step)
+        log_message(f"Preset offset step updated to {new_step}")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid offset step")
+
+tk.Button(advanced_frame, text="Apply", command=apply_preset_offset).grid(row=0, column=2, padx=10, pady=10, sticky='ew')
+
 
 # ------------------------ COMBINED LOG WINDOW ------------------------
 def clear_logger():
