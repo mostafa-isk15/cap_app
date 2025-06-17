@@ -80,7 +80,13 @@ float angularVelocity = 0.0;            // angular velocity from Nano
 const uint8_t SYNC = 0xFF;
 volatile float offset = 0.0;       // final linear offset (mm)
 float encoderZeroAngle = 0.0;  
-const float STEPS_PER_MM = 100.0; 
+const float STEPS_PER_MM = 100.0;
+
+int speedToDelayUs(int speedMmPerS) {
+  if (speedMmPerS <= 0) return 200;
+  float delayUs = 1000000.0f / (speedMmPerS * STEPS_PER_MM);
+  return (int)delayUs;
+}
 
 // Helper function to determine axis status based on limit switches
 String getXAxisStatus() {
@@ -212,7 +218,7 @@ void sendStatusUpdate() {
 }
 
 
-void runZAxis(bool direction, int motor, int steps = -1) {
+void runZAxis(bool direction, int motor, int steps = -1, int stepDelayUs = 200) {
   int stepPin = (motor == 1) ? STEP_PIN_Z1 : STEP_PIN_Z2;
   int dirPin = (motor == 1) ? DIR_PIN_Z1 : DIR_PIN_Z2;
   int enablePin = (motor == 1) ? ENABLE_Z1 : ENABLE_Z2;
@@ -243,9 +249,9 @@ void runZAxis(bool direction, int motor, int steps = -1) {
     if (emergencyStopActive) break;
     
     digitalWrite(stepPin, HIGH);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
     digitalWrite(stepPin, LOW);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
     
     if (steps >= 0) i++;  // Only count steps if steps parameter specified
   }
@@ -255,7 +261,7 @@ void runZAxis(bool direction, int motor, int steps = -1) {
 // Run both Z motors simultaneously. When 'steps' is negative, move each motor
 // until its respective limit is hit. Otherwise, move the specified number of
 // steps while monitoring the limits.
-void runDualZAxis(bool direction, int steps = -1) {
+void runDualZAxis(bool direction, int steps = -1, int stepDelayUs = 200) {
   digitalWrite(DIR_PIN_Z1, direction);
   digitalWrite(DIR_PIN_Z2, direction);
   digitalWrite(ENABLE_Z1, LOW);
@@ -278,10 +284,10 @@ void runDualZAxis(bool direction, int steps = -1) {
 
     if (!limit1) digitalWrite(STEP_PIN_Z1, HIGH);
     if (!limit2) digitalWrite(STEP_PIN_Z2, HIGH);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
     digitalWrite(STEP_PIN_Z1, LOW);
     digitalWrite(STEP_PIN_Z2, LOW);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
 
     if (steps >= 0) i++;
     if (steps < 0 && limit1 && limit2) break;
@@ -291,7 +297,7 @@ void runDualZAxis(bool direction, int steps = -1) {
   digitalWrite(ENABLE_Z2, HIGH);
 }
 
-void runXAxis(int steps, bool direction) {
+void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
   digitalWrite(DIR_PIN_X, direction);
   digitalWrite(ENABLE_X, LOW);
   isXMotorRunning = true;
@@ -314,10 +320,9 @@ void runXAxis(int steps, bool direction) {
     }
     pollCommandForEmergencyStop();
     if (emergencyStopActive) break;
-    digitalWrite(STEP_PIN_X, HIGH);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
     digitalWrite(STEP_PIN_X, LOW);
-    delayMicroseconds(200);
+    delayMicroseconds(stepDelayUs);
   }
   digitalWrite(ENABLE_X, HIGH);
 }
@@ -449,21 +454,29 @@ void processCommand(String command) {
     return;
   }
   
-  // Handle MOVE_LEFT with optional parameter (e.g., "MOVE_LEFT 50")
+  // Handle MOVE_LEFT with parameters like "MOVE_LEFT s1000 v50"
   if (command.startsWith("MOVE_LEFT")) {
     if (!canExecuteCommand(command)) return;
     Serial.println("LOG: Starting MOVE_LEFT...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_LEFT...");
     }
-    int steps = 20000; // Default value
-    int spaceIndex = command.indexOf(' ');
-    if (spaceIndex > 0) {
-      String stepStr = command.substring(spaceIndex + 1);
-      steps = stepStr.toInt();
-      if (steps <= 0) steps = 200000;
+    int steps = 20000;
+    int speed = 50;
+    String params = command.substring(String("MOVE_LEFT").length());
+    params.trim();
+    int idx = 0;
+    while (idx < params.length()) {
+      int space = params.indexOf(' ', idx);
+      if (space == -1) space = params.length();
+      String token = params.substring(idx, space);
+      if (token.startsWith("s")) steps = token.substring(1).toInt();
+      else if (token.startsWith("v")) speed = token.substring(1).toInt();
+      idx = space + 1;
     }
-    runXAxis(steps, false);
+    if (steps <= 0) steps = 200000;
+    int delayUs = speedToDelayUs(speed);
+    runXAxis(steps, false, delayUs);
     Serial.println("LOG: Done MOVE_LEFT");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_LEFT");
@@ -472,21 +485,29 @@ void processCommand(String command) {
     return;
   }
   
-  // Handle MOVE_RIGHT with optional parameter (e.g., "MOVE_RIGHT 50")
+  // Handle MOVE_RIGHT with parameters like "MOVE_RIGHT s1000 v50"
   if (command.startsWith("MOVE_RIGHT")) {
     if (!canExecuteCommand(command)) return;
     Serial.println("LOG: Starting MOVE_RIGHT...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_RIGHT...");
     }
-    int steps = 20000; // Default value
-    int spaceIndex = command.indexOf(' ');
-    if (spaceIndex > 0) {
-      String stepStr = command.substring(spaceIndex + 1);
-      steps = stepStr.toInt();
-      if (steps <= 0) steps = 200000;
+    int steps = 20000;
+    int speed = 50;
+    String params = command.substring(String("MOVE_RIGHT").length());
+    params.trim();
+    int idx = 0;
+    while (idx < params.length()) {
+      int space = params.indexOf(' ', idx);
+      if (space == -1) space = params.length();
+      String token = params.substring(idx, space);
+      if (token.startsWith("s")) steps = token.substring(1).toInt();
+      else if (token.startsWith("v")) speed = token.substring(1).toInt();
+      idx = space + 1;
     }
-    runXAxis(steps, true);
+    if (steps <= 0) steps = 200000;
+    int delayUs = speedToDelayUs(speed);
+    runXAxis(steps, true, delayUs);
     Serial.println("LOG: Done MOVE_RIGHT");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_RIGHT");
@@ -548,29 +569,31 @@ void processCommand(String command) {
     activeCommand = "";
     return;
   } else if (command.startsWith("MOVE_Z1_UP")) {
-  int spaceIndex = command.indexOf(' ');
-  if (spaceIndex > 0) {
-    String stepStr = command.substring(spaceIndex + 1);
-    int steps = stepStr.toInt();
-    if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_Z1_UP (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z1_UP (continuous)...");
-      }
-      runZAxis(true, 1);
-    } else {
-      Serial.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
-      }
-      runZAxis(true, 1, steps);
-    }
-  } else {
+    int steps = -1;
+  int speed = 50;
+  String params = command.substring(String("MOVE_Z1_UP").length());
+  params.trim();
+  int idx = 0;
+  while (idx < params.length()) {
+    int space = params.indexOf(' ', idx);
+    if (space == -1) space = params.length();
+    String token = params.substring(idx, space);
+    if (token.startsWith("s")) steps = token.substring(1).toInt();
+    else if (token.startsWith("v")) speed = token.substring(1).toInt();
+    idx = space + 1;
+  }
+  if (steps <= 0) {
     Serial.println("LOG: Starting MOVE_Z1_UP (continuous)...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_Z1_UP (continuous)...");
     }
-    runZAxis(true, 1);
+    runZAxis(true, 1, -1, speedToDelayUs(speed));
+  } else {
+    Serial.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
+    }
+    runZAxis(true, 1, steps, speedToDelayUs(speed));
   }
   Serial.println("LOG: Done MOVE_Z1_UP");
   if (responseClient && responseClient.connected()) {
@@ -580,29 +603,32 @@ void processCommand(String command) {
   return;
 
   } else if (command.startsWith("MOVE_Z1_DOWN")) {
-  int spaceIndex = command.indexOf(' ');
-  if (spaceIndex > 0) {
-    String stepStr = command.substring(spaceIndex + 1);
-    int steps = stepStr.toInt();
-    if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
-      }
-      runZAxis(false, 1);
-    } else {
-      Serial.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
-      }
-      runZAxis(false, 1, steps);
-    }
-  } else {
+  int firstSpace = command.indexOf(' ');
+  int steps = -1;
+  int speed = 50;
+  String params = command.substring(String("MOVE_Z1_DOWN").length());
+  params.trim();
+  int idx = 0;
+  while (idx < params.length()) {
+    int space = params.indexOf(' ', idx);
+    if (space == -1) space = params.length();
+    String token = params.substring(idx, space);
+    if (token.startsWith("s")) steps = token.substring(1).toInt();
+    else if (token.startsWith("v")) speed = token.substring(1).toInt();
+    idx = space + 1;
+  }
+  if (steps <= 0) {
     Serial.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
     }
-    runZAxis(false, 1);
+    runZAxis(false, 1, -1, speedToDelayUs(speed));
+  } else {
+    Serial.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
+    }
+    runZAxis(false, 1, steps, speedToDelayUs(speed));
   }
   Serial.println("LOG: Done MOVE_Z1_DOWN");
   if (responseClient && responseClient.connected()) {
@@ -612,29 +638,32 @@ void processCommand(String command) {
   return;
 
  } else if (command.startsWith("MOVE_Z2_UP")) {
-  int spaceIndex = command.indexOf(' ');
-  if (spaceIndex > 0) {
-    String stepStr = command.substring(spaceIndex + 1);
-    int steps = stepStr.toInt();
-    if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_Z2_UP (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z2_UP (continuous)...");
-      }
-      runZAxis(true, 2);
-    } else {
-      Serial.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
-      }
-      runZAxis(true, 2, steps);
-    }
-  } else {
+   int steps = -1;
+  int speed = 50;
+  String params = command.substring(String("MOVE_Z2_UP").length());
+  params.trim();
+  int idx = 0;
+  while (idx < params.length()) {
+    int space = params.indexOf(' ', idx);
+    if (space == -1) space = params.length();
+    String token = params.substring(idx, space);
+    if (token.startsWith("s")) steps = token.substring(1).toInt();
+    else if (token.startsWith("v")) speed = token.substring(1).toInt();
+    idx = space + 1;
+  }
+  if (steps <= 0) {
+
     Serial.println("LOG: Starting MOVE_Z2_UP (continuous)...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_Z2_UP (continuous)...");
     }
-    runZAxis(true, 2);
+    runZAxis(true, 2, -1, speedToDelayUs(speed));
+  } else {
+    Serial.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
+    }
+    runZAxis(true, 2, steps, speedToDelayUs(speed));
   }
   Serial.println("LOG: Done MOVE_Z2_UP");
   if (responseClient && responseClient.connected()) {
@@ -643,30 +672,32 @@ void processCommand(String command) {
   activeCommand = "";
   return;
 
-  } else if (command.startsWith("MOVE_Z2_DOWN")) {
-  int spaceIndex = command.indexOf(' ');
-  if (spaceIndex > 0) {
-    String stepStr = command.substring(spaceIndex + 1);
-    int steps = stepStr.toInt();
-    if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
-      }
-      runZAxis(false, 2);
-    } else {
-      Serial.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
-      }
-      runZAxis(false, 2, steps);
-    }
-  } else {
+ } else if (command.startsWith("MOVE_Z2_DOWN")) {
+  int steps = -1;
+  int speed = 50;
+  String params = command.substring(String("MOVE_Z2_DOWN").length());
+  params.trim();
+  int idx = 0;
+  while (idx < params.length()) {
+    int space = params.indexOf(' ', idx);
+    if (space == -1) space = params.length();
+    String token = params.substring(idx, space);
+    if (token.startsWith("s")) steps = token.substring(1).toInt();
+    else if (token.startsWith("v")) speed = token.substring(1).toInt();
+    idx = space + 1;
+  }
+  if (steps <= 0) {
     Serial.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
     }
-    runZAxis(false, 2);
+    runZAxis(false, 2, -1, speedToDelayUs(speed));
+  } else {
+    Serial.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
+    }
+    runZAxis(false, 2, steps, speedToDelayUs(speed));
   }
   Serial.println("LOG: Done MOVE_Z2_DOWN");
   if (responseClient && responseClient.connected()) {
