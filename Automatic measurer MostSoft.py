@@ -36,6 +36,7 @@ preset_offset_step = 500
 def load_advanced_settings():
     """Load advanced settings from disk if available."""
     global default_left_right_steps, default_up_down_steps, preset_offset_step
+    global default_x_speed, default_z_speed
     if os.path.exists(advanced_settings_file):
         try:
             with open(advanced_settings_file, "r") as f:
@@ -43,6 +44,8 @@ def load_advanced_settings():
             default_left_right_steps = data.get("default_left_right_steps", default_left_right_steps)
             default_up_down_steps = data.get("default_up_down_steps", default_up_down_steps)
             preset_offset_step = data.get("preset_offset_step", preset_offset_step)
+            default_x_speed = data.get("default_x_speed", default_x_speed)
+            default_z_speed = data.get("default_z_speed", default_z_speed)
         except Exception:
             # If loading fails just keep the defaults
             pass
@@ -53,6 +56,8 @@ def save_advanced_settings():
         "default_left_right_steps": default_left_right_steps,
         "default_up_down_steps": default_up_down_steps,
         "preset_offset_step": preset_offset_step,
+        "default_x_speed": default_x_speed,
+        "default_z_speed": default_z_speed,
     }
     with open(advanced_settings_file, "w") as f:
         json.dump(data, f)
@@ -303,7 +308,7 @@ def move_left_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_left_double():
-    cmd = "MOVE_LEFT"
+    cmd = f"MOVE_LEFT v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -319,40 +324,12 @@ def move_right_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_right_double():
-    cmd = "MOVE_RIGHT"
+    cmd = f"MOVE_RIGHT v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
     else:
         log_message(f"Sent Command: {cmd}")
-
-'''def MOVE_Z1_UP():
-    response = send_command("MOVE_Z1_UP")
-    if response.startswith("Error"):
-        messagebox.showerror("Error", response)
-    else:
-        log_message("Sent Command: MOVE_Z1_UP")
-
-def MOVE_Z1_DOWN():
-    response = send_command("MOVE_Z1_DOWN")
-    if response.startswith("Error"):
-        messagebox.showerror("Error", response)
-    else:
-        log_message("Sent Command: MOVE_Z1_DOWN")
-
-def MOVE_Z2_UP():
-    response = send_command("MOVE_Z2_UP")
-    if response.startswith("Error"):
-        messagebox.showerror("Error", response)
-    else:
-        log_message("Sent Command: MOVE_Z2_UP")
-
-def MOVE_Z2_DOWN():
-    response = send_command("MOVE_Z2_DOWN")
-    if response.startswith("Error"):
-        messagebox.showerror("Error", response)
-    else:
-        log_message("Sent Command: MOVE_Z2_DOWN")'''
 
 def move_z1_up_single():
     # Single click sends the command with additional parameters
@@ -364,8 +341,8 @@ def move_z1_up_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_z1_up_double():
-    # Double click sends the standard command without the extra parameter
-    cmd = "MOVE_Z1_UP"
+    # Double click sends a continuous move using the configured speed
+    cmd = f"MOVE_Z1_UP v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -381,7 +358,7 @@ def move_z1_down_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_z1_down_double():
-    cmd = "MOVE_Z1_DOWN"
+    cmd = f"MOVE_Z1_DOWN v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -397,7 +374,7 @@ def move_z2_up_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_up_double():
-    cmd = "MOVE_Z2_UP"
+    cmd = f"MOVE_Z2_UP v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -413,7 +390,7 @@ def move_z2_down_single():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_down_double():
-    cmd = "MOVE_Z2_DOWN"
+    cmd = f"MOVE_Z2_DOWN v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -425,7 +402,7 @@ def move_to_preset(preset_number):
         messagebox.showerror("Error", f"Preset position {preset_number} not defined")
         return
     target_offset = preset_positions[preset_number]["offset"]
-    cmd = f"PRESET({target_offset})"
+    cmd = f"PRESET({target_offset}) v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -764,12 +741,12 @@ def start_cmu_control():
             # Wait for homing to finish before continuing
             wait_for_preset_homing_done()
             # Lower Z2 before the very first measurement
-            send_command("MOVE_Z2_DOWN")
+            send_command(f"MOVE_Z2_DOWN v{default_z_speed}")
             log_message("Sent MOVE_Z2_DOWN after homing.")
             time.sleep(1)
         else:
             current_offset += step_increment
-            cmd = f"PRESET({current_offset})"
+            cmd = f"PRESET({current_offset}) v{default_x_speed}"
             response = send_command(cmd)
             log_message(f"Sent command: {cmd} for measurement #{measure_index + 1}.")
             # Wait until the Teensy confirms movement is complete.
