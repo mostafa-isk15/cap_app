@@ -20,12 +20,42 @@ command_port = 65432           # Port for commands/responses
 status_port = 65433            # Port for continuous status updates
 response_port = 65434          # Port for responses (errors, logs, completions)
 
+# File where values modified from the Advanced tab are persisted
+advanced_settings_file = "advanced_settings.json"
+
 persistent_command_socket = None
 default_left_right_steps = 1000
 default_up_down_steps = 2000
 
 # Default step between preset positions
 preset_offset_step = 500
+
+def load_advanced_settings():
+    """Load advanced settings from disk if available."""
+    global default_left_right_steps, default_up_down_steps, preset_offset_step
+    if os.path.exists(advanced_settings_file):
+        try:
+            with open(advanced_settings_file, "r") as f:
+                data = json.load(f)
+            default_left_right_steps = data.get("default_left_right_steps", default_left_right_steps)
+            default_up_down_steps = data.get("default_up_down_steps", default_up_down_steps)
+            preset_offset_step = data.get("preset_offset_step", preset_offset_step)
+        except Exception:
+            # If loading fails just keep the defaults
+            pass
+
+def save_advanced_settings():
+    """Persist advanced settings to disk."""
+    data = {
+        "default_left_right_steps": default_left_right_steps,
+        "default_up_down_steps": default_up_down_steps,
+        "preset_offset_step": preset_offset_step,
+    }
+    with open(advanced_settings_file, "w") as f:
+        json.dump(data, f)
+
+# Load settings before creating structures that depend on them
+load_advanced_settings()
 
 # Preset positions dictionary populated from preset_offset_step
 preset_positions = {
@@ -870,21 +900,41 @@ tk.Button(parameters_frame, text="Save Profile", command=save_profile)\
 # ------------------------ ADVANCED TAB ------------------------
 advanced_frame = Frame(notebook)
 notebook.add(advanced_frame, text="Advanced")
+for i in range(3):
+    advanced_frame.columnconfigure(i, weight=1)
 
 tk.Label(advanced_frame, text="Preset Offset Step:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
 preset_offset_entry = tk.Entry(advanced_frame)
 preset_offset_entry.insert(0, str(preset_offset_step))
 preset_offset_entry.grid(row=0, column=1, padx=10, pady=10, sticky='ew')
 
-def apply_preset_offset():
-    try:
-        new_step = int(preset_offset_entry.get())
-        update_preset_positions(new_step)
-        log_message(f"Preset offset step updated to {new_step}")
-    except ValueError:
-        messagebox.showerror("Error", "Invalid offset step")
+tk.Label(advanced_frame, text="Left/Right Step:").grid(row=1, column=0, padx=10, pady=10, sticky='w')
+left_right_step_entry = tk.Entry(advanced_frame)
+left_right_step_entry.insert(0, str(default_left_right_steps))
+left_right_step_entry.grid(row=1, column=1, padx=10, pady=10, sticky='ew')
 
-tk.Button(advanced_frame, text="Apply", command=apply_preset_offset).grid(row=0, column=2, padx=10, pady=10, sticky='ew')
+tk.Label(advanced_frame, text="Up/Down Step:").grid(row=2, column=0, padx=10, pady=10, sticky='w')
+up_down_step_entry = tk.Entry(advanced_frame)
+up_down_step_entry.insert(0, str(default_up_down_steps))
+up_down_step_entry.grid(row=2, column=1, padx=10, pady=10, sticky='ew')
+
+def apply_advanced_settings():
+    global default_left_right_steps, default_up_down_steps
+    try:
+        new_preset = int(preset_offset_entry.get())
+        new_lr = int(left_right_step_entry.get())
+        new_ud = int(up_down_step_entry.get())
+
+        update_preset_positions(new_preset)
+        default_left_right_steps = new_lr
+        default_up_down_steps = new_ud
+        save_advanced_settings()
+
+        log_message("Advanced settings updated")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid advanced settings")
+
+tk.Button(advanced_frame, text="Apply", command=apply_advanced_settings).grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
 
 
 # ------------------------ COMBINED LOG WINDOW ------------------------
