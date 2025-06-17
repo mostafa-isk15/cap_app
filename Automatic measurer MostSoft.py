@@ -26,6 +26,9 @@ advanced_settings_file = "advanced_settings.json"
 persistent_command_socket = None
 default_left_right_steps = 1000
 default_up_down_steps = 2000
+# Default movement speeds in mm/s
+default_x_speed = 50
+default_z_speed = 20
 
 # Default step between preset positions
 preset_offset_step = 500
@@ -282,9 +285,9 @@ def move_motor(direction):
     elif direction == "DOWN":
         cmd = "MOVE_DOWN"
     elif direction == "LEFT":
-        cmd = "MOVE_LEFT " + str(default_left_right_steps)
+        cmd = f"MOVE_LEFT s{default_left_right_steps} v{default_x_speed}"
     elif direction == "RIGHT":
-        cmd = "MOVE_RIGHT " + str(default_left_right_steps)
+        cmd = f"MOVE_RIGHT s{default_left_right_steps} v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -292,7 +295,7 @@ def move_motor(direction):
         log_message(f"Sent Command: {cmd}")
 
 def move_left_single():
-    cmd = "MOVE_LEFT " + str(default_left_right_steps)
+    cmd = f"MOVE_LEFT s{default_left_right_steps} v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -308,7 +311,7 @@ def move_left_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_right_single():
-    cmd = "MOVE_RIGHT " + str(default_left_right_steps)
+    cmd = f"MOVE_RIGHT s{default_left_right_steps} v{default_x_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -352,8 +355,8 @@ def MOVE_Z2_DOWN():
         log_message("Sent Command: MOVE_Z2_DOWN")'''
 
 def move_z1_up_single():
-    # Single click sends the command with the additional parameter (e.g., _300)
-    cmd = "MOVE_Z1_UP "+ str(default_up_down_steps)
+    # Single click sends the command with additional parameters
+    cmd = f"MOVE_Z1_UP s{default_up_down_steps} v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -370,7 +373,7 @@ def move_z1_up_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z1_down_single():
-    cmd = "MOVE_Z1_DOWN "+ str(default_up_down_steps)
+    cmd = f"MOVE_Z1_DOWN s{default_up_down_steps} v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -386,7 +389,7 @@ def move_z1_down_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_up_single():
-    cmd = "MOVE_Z2_UP "+ str(default_up_down_steps)
+    cmd = f"MOVE_Z2_UP s{default_up_down_steps} v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -402,7 +405,7 @@ def move_z2_up_double():
         log_message(f"Sent Command: {cmd}")
 
 def move_z2_down_single():
-    cmd = "MOVE_Z2_DOWN "+ str(default_up_down_steps)
+    cmd = f"MOVE_Z2_DOWN s{default_up_down_steps} v{default_z_speed}"
     response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
@@ -472,23 +475,37 @@ def processCommand(command):
     elif command.startswith("MOVE_LEFT"):
         parts = command.split()
         steps = default_left_right_steps
-        if len(parts) > 1:
-            try:
-                steps = int(parts[1])
-            except:
-                steps = default_left_right_steps
-        log_message(f"MOVE_LEFT {steps} command sent")
-        send_command(f"MOVE_LEFT {steps}")
+        speed = default_x_speed
+        for part in parts[1:]:
+            if part.startswith('s'):
+                try:
+                    steps = int(part[1:])
+                except ValueError:
+                    steps = default_left_right_steps
+            elif part.startswith('v'):
+                try:
+                    speed = int(part[1:])
+                except ValueError:
+                    speed = default_x_speed
+        log_message(f"MOVE_LEFT {steps} {speed} command sent")
+        send_command(f"MOVE_LEFT s{steps} v{speed}")
     elif command.startswith("MOVE_RIGHT"):
         parts = command.split()
         steps = default_left_right_steps
-        if len(parts) > 1:
-            try:
-                steps = int(parts[1])
-            except:
-                steps = default_left_right_steps
-        log_message(f"MOVE_RIGHT {steps} command sent")
-        send_command(f"MOVE_RIGHT {steps}")
+        speed = default_x_speed
+        for part in parts[1:]:
+            if part.startswith('s'):
+                try:
+                    steps = int(part[1:])
+                except ValueError:
+                    steps = default_left_right_steps
+            elif part.startswith('v'):
+                try:
+                    speed = int(part[1:])
+                except ValueError:
+                    speed = default_x_speed
+        log_message(f"MOVE_RIGHT {steps} {speed} command sent")
+        send_command(f"MOVE_RIGHT s{steps} v{speed}")
     elif command == "CLEAR_ICE":
         log_message("CLEAR_ICE command sent")
         send_command("CLEAR_ICE")
@@ -903,39 +920,87 @@ notebook.add(advanced_frame, text="Advanced")
 for i in range(3):
     advanced_frame.columnconfigure(i, weight=1)
 
-tk.Label(advanced_frame, text="Preset Offset Step:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
+# Row 0: Preset Offset Step
+tk.Label(advanced_frame, text="Preset Offset Step:")\
+    .grid(row=0, column=0, padx=10, pady=10, sticky="w")
 preset_offset_entry = tk.Entry(advanced_frame)
 preset_offset_entry.insert(0, str(preset_offset_step))
-preset_offset_entry.grid(row=0, column=1, padx=10, pady=10, sticky='ew')
+preset_offset_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
-tk.Label(advanced_frame, text="Left/Right Step:").grid(row=1, column=0, padx=10, pady=10, sticky='w')
+# Row 1: X Axis Speed
+tk.Label(advanced_frame, text="X Axis Speed (mm/s):")\
+    .grid(row=1, column=0, padx=10, pady=10, sticky="w")
+x_speed_entry = tk.Entry(advanced_frame)
+x_speed_entry.insert(0, str(default_x_speed))
+x_speed_entry.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+
+# Row 2: Z Axis Speed
+tk.Label(advanced_frame, text="Z Axis Speed (mm/s):")\
+    .grid(row=2, column=0, padx=10, pady=10, sticky="w")
+z_speed_entry = tk.Entry(advanced_frame)
+z_speed_entry.insert(0, str(default_z_speed))
+z_speed_entry.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+
+# Row 3: Left/Right Step
+tk.Label(advanced_frame, text="Left/Right Step:")\
+    .grid(row=3, column=0, padx=10, pady=10, sticky="w")
 left_right_step_entry = tk.Entry(advanced_frame)
 left_right_step_entry.insert(0, str(default_left_right_steps))
-left_right_step_entry.grid(row=1, column=1, padx=10, pady=10, sticky='ew')
+left_right_step_entry.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
 
-tk.Label(advanced_frame, text="Up/Down Step:").grid(row=2, column=0, padx=10, pady=10, sticky='w')
+# Row 4: Up/Down Step
+tk.Label(advanced_frame, text="Up/Down Step:")\
+    .grid(row=4, column=0, padx=10, pady=10, sticky="w")
 up_down_step_entry = tk.Entry(advanced_frame)
 up_down_step_entry.insert(0, str(default_up_down_steps))
-up_down_step_entry.grid(row=2, column=1, padx=10, pady=10, sticky='ew')
+up_down_step_entry.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
 
+# Apply button
 def apply_advanced_settings():
+    global preset_offset_step, default_x_speed, default_z_speed
     global default_left_right_steps, default_up_down_steps
+
+    # Preset offset
     try:
         new_preset = int(preset_offset_entry.get())
-        new_lr = int(left_right_step_entry.get())
-        new_ud = int(up_down_step_entry.get())
-
         update_preset_positions(new_preset)
-        default_left_right_steps = new_lr
-        default_up_down_steps = new_ud
-        save_advanced_settings()
-
-        log_message("Advanced settings updated")
+        preset_offset_step = new_preset
+        log_message(f"Preset offset step updated to {new_preset}")
     except ValueError:
-        messagebox.showerror("Error", "Invalid advanced settings")
+        messagebox.showerror("Error", "Invalid Preset Offset Step")
 
-tk.Button(advanced_frame, text="Apply", command=apply_advanced_settings).grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+    # X speed
+    try:
+        default_x_speed = int(x_speed_entry.get())
+        log_message(f"X axis speed updated to {default_x_speed} mm/s")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid X Axis Speed")
 
+    # Z speed
+    try:
+        default_z_speed = int(z_speed_entry.get())
+        log_message(f"Z axis speed updated to {default_z_speed} mm/s")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid Z Axis Speed")
+
+    # Left/Right steps
+    try:
+        default_left_right_steps = int(left_right_step_entry.get())
+        log_message(f"Left/Right step updated to {default_left_right_steps}")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid Left/Right Step")
+
+    # Up/Down steps
+    try:
+        default_up_down_steps = int(up_down_step_entry.get())
+        log_message(f"Up/Down step updated to {default_up_down_steps}")
+    except ValueError:
+        messagebox.showerror("Error", "Invalid Up/Down Step")
+
+    save_advanced_settings()
+
+tk.Button(advanced_frame, text="Apply", command=apply_advanced_settings)\
+    .grid(row=5, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
 
 # ------------------------ COMBINED LOG WINDOW ------------------------
 def clear_logger():
