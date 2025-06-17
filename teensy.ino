@@ -320,6 +320,7 @@ void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
     }
     pollCommandForEmergencyStop();
     if (emergencyStopActive) break;
+    digitalWrite(STEP_PIN_X, HIGH);
     delayMicroseconds(stepDelayUs);
     digitalWrite(STEP_PIN_X, LOW);
     delayMicroseconds(stepDelayUs);
