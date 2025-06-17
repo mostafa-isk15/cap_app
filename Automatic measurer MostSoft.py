@@ -20,7 +20,7 @@ command_port = 65432           # Port for commands/responses
 status_port = 65433            # Port for continuous status updates
 response_port = 65434          # Port for responses (errors, logs, completions)
 
-# File where values modified from the Advanced tab are persisted
+# File where values modified from the Advanced_settings tab are persisted
 advanced_settings_file = "advanced_settings.json"
 
 persistent_command_socket = None
@@ -34,7 +34,7 @@ default_z_speed = 20
 preset_offset_step = 500
 
 def load_advanced_settings():
-    """Load advanced settings from disk if available."""
+    """Load Advanced_settings from disk if available."""
     global default_left_right_steps, default_up_down_steps, preset_offset_step
     global default_x_speed, default_z_speed
     if os.path.exists(advanced_settings_file):
@@ -51,7 +51,7 @@ def load_advanced_settings():
             pass
 
 def save_advanced_settings():
-    """Persist advanced settings to disk."""
+    """Persist Advanced_settings to disk."""
     data = {
         "default_left_right_steps": default_left_right_steps,
         "default_up_down_steps": default_up_down_steps,
@@ -277,7 +277,8 @@ def emergency_stop():
         log_message("Emergency Stop Activated")
 
 def home_machine():
-    response = send_command("HOME")
+    cmd = f"HOME v{default_x_speed}"
+    response = send_command(cmd)
     if response.startswith("Error"):
         messagebox.showerror("Error", response)
     else:
@@ -286,9 +287,9 @@ def home_machine():
 def move_motor(direction):
     cmd = ""
     if direction == "UP":
-        cmd = "MOVE_UP"
+        cmd = f"MOVE_UP v{default_z_speed}"
     elif direction == "DOWN":
-        cmd = "MOVE_DOWN"
+        cmd = f"MOVE_DOWN v{default_z_speed}"
     elif direction == "LEFT":
         cmd = f"MOVE_LEFT s{default_left_right_steps} v{default_x_speed}"
     elif direction == "RIGHT":
@@ -736,7 +737,8 @@ def start_cmu_control():
     current_offset = 0  # Starting position (home)
     for measure_index in range(num_measures):
         if measure_index == 0:
-            response = send_command("HOME")
+            cmd = f"HOME v{default_x_speed}"
+            response = send_command(cmd)
             log_message("Sent HOME command for first measurement.")
             # Wait for homing to finish before continuing
             wait_for_preset_homing_done()
@@ -756,7 +758,7 @@ def start_cmu_control():
         measure_capacitance()
 
     # After all measurements, return to the home position
-    send_command("HOME")
+    send_command(f"HOME v{default_x_speed}")
     log_message("Sent HOME command after measurement sequence.")
     wait_for_preset_homing_done()
     log_message("CMU control measurement sequence complete.")
@@ -891,44 +893,44 @@ num_measures_entry_auto.grid(row=4, column=1, padx=10, pady=5, sticky='ew')
 tk.Button(parameters_frame, text="Save Profile", command=save_profile)\
     .grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky='ew')
 
-# ------------------------ ADVANCED TAB ------------------------
-advanced_frame = Frame(notebook)
-notebook.add(advanced_frame, text="Advanced")
+# ------------------------ Advanced_settings TAB ------------------------
+Advanced_settings_frame = Frame(notebook)
+notebook.add(Advanced_settings_frame, text="Advanced settings")
 for i in range(3):
-    advanced_frame.columnconfigure(i, weight=1)
+    Advanced_settings_frame.columnconfigure(i, weight=1)
 
 # Row 0: Preset Offset Step
-tk.Label(advanced_frame, text="Preset Offset Step:")\
+tk.Label(Advanced_settings_frame, text="Preset Offset Step:")\
     .grid(row=0, column=0, padx=10, pady=10, sticky="w")
-preset_offset_entry = tk.Entry(advanced_frame)
+preset_offset_entry = tk.Entry(Advanced_settings_frame)
 preset_offset_entry.insert(0, str(preset_offset_step))
 preset_offset_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
 # Row 1: X Axis Speed
-tk.Label(advanced_frame, text="X Axis Speed (mm/s):")\
+tk.Label(Advanced_settings_frame, text="X Axis Speed (mm/s):")\
     .grid(row=1, column=0, padx=10, pady=10, sticky="w")
-x_speed_entry = tk.Entry(advanced_frame)
+x_speed_entry = tk.Entry(Advanced_settings_frame)
 x_speed_entry.insert(0, str(default_x_speed))
 x_speed_entry.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
 
 # Row 2: Z Axis Speed
-tk.Label(advanced_frame, text="Z Axis Speed (mm/s):")\
+tk.Label(Advanced_settings_frame, text="Z Axis Speed (mm/s):")\
     .grid(row=2, column=0, padx=10, pady=10, sticky="w")
-z_speed_entry = tk.Entry(advanced_frame)
+z_speed_entry = tk.Entry(Advanced_settings_frame)
 z_speed_entry.insert(0, str(default_z_speed))
 z_speed_entry.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
 
 # Row 3: Left/Right Step
-tk.Label(advanced_frame, text="Left/Right Step:")\
+tk.Label(Advanced_settings_frame, text="Left/Right Step:")\
     .grid(row=3, column=0, padx=10, pady=10, sticky="w")
-left_right_step_entry = tk.Entry(advanced_frame)
+left_right_step_entry = tk.Entry(Advanced_settings_frame)
 left_right_step_entry.insert(0, str(default_left_right_steps))
 left_right_step_entry.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
 
 # Row 4: Up/Down Step
-tk.Label(advanced_frame, text="Up/Down Step:")\
+tk.Label(Advanced_settings_frame, text="Up/Down Step:")\
     .grid(row=4, column=0, padx=10, pady=10, sticky="w")
-up_down_step_entry = tk.Entry(advanced_frame)
+up_down_step_entry = tk.Entry(Advanced_settings_frame)
 up_down_step_entry.insert(0, str(default_up_down_steps))
 up_down_step_entry.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
 
@@ -976,7 +978,7 @@ def apply_advanced_settings():
 
     save_advanced_settings()
 
-tk.Button(advanced_frame, text="Apply", command=apply_advanced_settings)\
+tk.Button(Advanced_settings_frame, text="Apply", command=apply_advanced_settings)\
     .grid(row=5, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
 
 # ------------------------ COMBINED LOG WINDOW ------------------------
