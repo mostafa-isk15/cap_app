@@ -466,7 +466,7 @@ void processCommand(String command) {
     int speed = 50;
     String params = command.substring(String("MOVE_LEFT").length());
     params.trim();
-    int idx = 0;
+    size_t idx = 0;
     while (idx < params.length()) {
       int space = params.indexOf(' ', idx);
       if (space == -1) space = params.length();
@@ -497,7 +497,7 @@ void processCommand(String command) {
     int speed = 50;
     String params = command.substring(String("MOVE_RIGHT").length());
     params.trim();
-    int idx = 0;
+    size_t idx = 0;
     while (idx < params.length()) {
       int space = params.indexOf(' ', idx);
       if (space == -1) space = params.length();
@@ -574,7 +574,7 @@ void processCommand(String command) {
   int speed = 50;
   String params = command.substring(String("MOVE_Z1_UP").length());
   params.trim();
-  int idx = 0;
+  size_t idx = 0;
   while (idx < params.length()) {
     int space = params.indexOf(' ', idx);
     if (space == -1) space = params.length();
@@ -604,12 +604,11 @@ void processCommand(String command) {
   return;
 
   } else if (command.startsWith("MOVE_Z1_DOWN")) {
-  int firstSpace = command.indexOf(' ');
   int steps = -1;
   int speed = 50;
   String params = command.substring(String("MOVE_Z1_DOWN").length());
   params.trim();
-  int idx = 0;
+  size_t idx = 0;
   while (idx < params.length()) {
     int space = params.indexOf(' ', idx);
     if (space == -1) space = params.length();
@@ -643,7 +642,7 @@ void processCommand(String command) {
   int speed = 50;
   String params = command.substring(String("MOVE_Z2_UP").length());
   params.trim();
-  int idx = 0;
+  size_t idx = 0;
   while (idx < params.length()) {
     int space = params.indexOf(' ', idx);
     if (space == -1) space = params.length();
@@ -678,7 +677,7 @@ void processCommand(String command) {
   int speed = 50;
   String params = command.substring(String("MOVE_Z2_DOWN").length());
   params.trim();
-  int idx = 0;
+  size_t idx = 0;
   while (idx < params.length()) {
     int space = params.indexOf(' ', idx);
     if (space == -1) space = params.length();
@@ -719,7 +718,7 @@ void processCommand(String command) {
     }
     activeCommand = "";
     
-  } else if (command.startsWith("PRESET")) { // New PRESET command branch
+  } else if (command.startsWith("PRESET")) { // PRESET command with optional speed
     int startIdx = command.indexOf('(');
     int endIdx = command.indexOf(')', startIdx);
     if (startIdx == -1 || endIdx == -1 || endIdx <= startIdx + 1) {
@@ -733,6 +732,18 @@ void processCommand(String command) {
     String offsetStr = command.substring(startIdx + 1, endIdx);
     int targetOffsetSteps = offsetStr.toInt();
 
+    int speed = 50; // default speed in mm/s
+    String params = command.substring(endIdx + 1);
+    params.trim();
+    size_t idx = 0;
+    while (idx < params.length()) {
+      int space = params.indexOf(' ', idx);
+      if (space == -1) space = params.length();
+      String token = params.substring(idx, space);
+      if (token.startsWith("v")) speed = token.substring(1).toInt();
+      idx = space + 1;
+    }
+    int delayUs = speedToDelayUs(speed);
     // Convert current encoder position (in mm) to steps for accurate delta
     float currentSteps = offset * STEPS_PER_MM;
     float deltaSteps = targetOffsetSteps - currentSteps;
@@ -749,7 +760,7 @@ void processCommand(String command) {
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Starting PRESET command: Lifting Z2...");
     }
-    runZAxis(true, 2); // Lift Z2 upward.
+    runZAxis(true, 2, -1, delayUs); // Lift Z2 upward.
     int stepCount = (int)fabsf(deltaSteps);
     if (deltaSteps > 0) {
       Serial.print("LOG: Moving LEFT ");
@@ -760,7 +771,7 @@ void processCommand(String command) {
         responseClient.print(stepCount);
         responseClient.println(" steps.");
       }
-      runXAxis(stepCount, false); // Move left.
+      runXAxis(stepCount, false, delayUs); // Move left.
     } else {
       Serial.print("LOG: Moving RIGHT ");
       Serial.print(stepCount);
@@ -770,13 +781,13 @@ void processCommand(String command) {
         responseClient.print(stepCount);
         responseClient.println(" steps.");
       }
-      runXAxis(stepCount, true); // Move right.
+      runXAxis(stepCount, true, delayUs); // Move right.
     }
     Serial.println("LOG: Lowering Z2 to complete PRESET command.");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Lowering Z2 to complete PRESET command.");
     }
-    runZAxis(false, 2); // Lower Z2.
+    runZAxis(false, 2, -1, delayUs); // Lower Z2.
     activeCommand = "";
     Serial.print("LOG: PRESET command done.");
     if (responseClient && responseClient.connected()) {
