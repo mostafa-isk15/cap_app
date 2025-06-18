@@ -189,7 +189,7 @@ void readEncoder() {
     offset = 0.0f;
   }
 }
-/*void detectErrors() {
+void detectErrors() {
   if (isXMotorRunning && millis() - motorStartTime > 3000) {
     int currentoffset = offset;
     // If the encoder hasn't changed significantly, flag an error.
@@ -202,7 +202,7 @@ void readEncoder() {
     }
   }
 }
-*/
+
 void sendStatusUpdate() {
   if (statusClient && statusClient.connected()) {
     String status = "{";
