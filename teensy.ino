@@ -133,7 +133,7 @@ bool isEncoderMoving() {
 void setup() {
  Serial.begin(115200);
  Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
- Serial1.begin(115200); // communication with Nano over Serial1 (RX on pin 24)
+ Serial1.begin(9600); // communication with Nano over Serial1 (RX on pin 24)
 while (!Serial && millis() < 3000);  // ✅ good
   Serial.println("Initializing Ethernet...");
   
