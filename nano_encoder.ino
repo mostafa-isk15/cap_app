@@ -23,7 +23,7 @@ uint16_t readRawAngle() {
 
 void setup() {
   Serial.begin(115200);    // USB debug
-  Serial1.begin(115200);   // TX1 → Teensy RX1
+  Serial1.begin(9600);   // TX1 → Teensy RX1
   Wire.begin();
   unsigned long waitStart = millis();
   while (!Serial && (millis() - waitStart < 3000)) {
