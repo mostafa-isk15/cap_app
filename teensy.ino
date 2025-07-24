@@ -37,30 +37,31 @@ const char* validCommands[] = {
   "MOVE_OFFSET_DECREASE"
 };
 const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
-
+#define ETH_CS 14 
 // Motor and sensor pins
 #define STEP_PIN_Z1 2
 #define DIR_PIN_Z1 3
-#define ENABLE_Z1 6
+#define ENABLE_Z1 4
 
-#define STEP_PIN_Z2 4
-#define DIR_PIN_Z2 5
+#define STEP_PIN_Z2 5
+#define DIR_PIN_Z2 6
 #define ENABLE_Z2 7
 
 #define STEP_PIN_X 8
 #define DIR_PIN_X 9
-#define ENABLE_X 26 // not used
+#define ENABLE_X 10 // not used
 
 // Limit switch pins
-#define LIMIT_UP_Z1 14
-#define LIMIT_DOWN_Z1 15
-#define LIMIT_UP_Z2 16
-#define LIMIT_DOWN_Z2 17
-#define LIMIT_LEFT 18
-#define LIMIT_RIGHT 19
-#define LIMIT_GROUND_Z1 20
-#define LIMIT_GROUND_Z2 21
-#define EMERGENCY_STOP_PIN 22
+#define EMERGENCY_STOP_PIN 15
+#define LIMIT_GROUND_Z1 16
+#define LIMIT_GROUND_Z2 17
+#define LIMIT_UP_Z1 18
+#define LIMIT_DOWN_Z1 19
+#define LIMIT_UP_Z2 20
+#define LIMIT_DOWN_Z2 21
+#define LIMIT_LEFT 22
+#define LIMIT_RIGHT 23 
+
 
 // AS5600 Encoder pins
 //#define ENCODER_SCL 37
@@ -80,12 +81,92 @@ float angularVelocity = 0.0;            // angular velocity from Nano
 const uint8_t SYNC = 0xFF;
 volatile float offset = 0.0;       // final linear offset (mm)
 float encoderZeroAngle = 0.0;  
-const float STEPS_PER_MM = 100.0;
+const float STEPS_PER_MM = 100.0; // change according to the dip switches on the driver (microstepping) and ball screw pitch
 
-int speedToDelayUs(int speedMmPerS) {
-  if (speedMmPerS <= 0) return 200;
-  float delayUs = 1000000.0f / (speedMmPerS * STEPS_PER_MM);
-  return (int)delayUs;
+void setup() {
+ Serial.begin(115200);
+ Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
+ Serial1.begin(9600); // communication with Nano over Serial1 (RX on pin 24)
+while (!Serial && millis() < 3000);  // ✅ good
+  Serial.println("Initializing Ethernet...");
+  Ethernet.init(ETH_CS);   // tell Ethernet library to use that pin
+  Ethernet.begin(mac, ip);
+  commandServer.begin();
+  statusServer.begin();
+  responseServer.begin();
+  
+  Serial.println("Teensy Ethernet Servers Started.");
+
+  // Set pin modes
+  pinMode(STEP_PIN_Z1, OUTPUT);
+  pinMode(DIR_PIN_Z1, OUTPUT);
+  pinMode(STEP_PIN_Z2, OUTPUT);
+  pinMode(DIR_PIN_Z2, OUTPUT);
+  pinMode(ENABLE_Z1, OUTPUT);
+  pinMode(ENABLE_Z2, OUTPUT);
+  pinMode(STEP_PIN_X, OUTPUT);
+  pinMode(DIR_PIN_X, OUTPUT);
+  pinMode(ENABLE_X, OUTPUT);
+  pinMode(LIMIT_UP_Z1, INPUT_PULLUP);
+  pinMode(LIMIT_DOWN_Z1, INPUT_PULLUP);
+  pinMode(LIMIT_UP_Z2, INPUT_PULLUP);
+  pinMode(LIMIT_DOWN_Z2, INPUT_PULLUP);
+  pinMode(LIMIT_GROUND_Z1, INPUT_PULLUP);
+  pinMode(LIMIT_GROUND_Z2, INPUT_PULLUP);
+  pinMode(LIMIT_LEFT, INPUT_PULLUP);
+  pinMode(LIMIT_RIGHT, INPUT_PULLUP);
+  pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);  // Button active LOW
+}
+
+// Poll the persistent command connection for an emergency stop command.
+void pollCommandForEmergencyStop() {
+  // First: check hardware emergency stop button on pin 22
+  static bool buttonWasPressed = false;
+  bool buttonIsPressed = digitalRead(22) == LOW;
+
+  if (buttonIsPressed && !buttonWasPressed) {
+    emergencyStopActive = true;
+    Serial.println("Emergency stop triggered by hardware button.");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("LOG: Hardware Emergency Stop Activated.");
+    }
+  }
+
+  buttonWasPressed = buttonIsPressed;
+
+  // Then: check if command was received from Ethernet
+  if (commandClient && commandClient.available() > 0) {
+    String newCmd = commandClient.readStringUntil('\n');
+    newCmd.trim();
+    if (newCmd == "STOP" || newCmd == "EMERGENCY_STOP") {
+      emergencyStopActive = true;
+      Serial.println("Emergency stop command received during operation.");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Emergency Stop Activated.");
+      }
+    }
+  }
+}
+
+void sendStatusUpdate() {
+  if (statusClient && statusClient.connected()) {
+    String status = "{";
+    status += "\"X_axis\":\"" + getXAxisStatus() + "\",";
+    status += "\"offset\":\"" + String(offset) + "\",";
+    status += "\"home_position\":\"" + String(isHomed ? "Yes" : "No") + "\",";
+    String z1Status = getZAxisStatus(LIMIT_UP_Z1, LIMIT_DOWN_Z1, LIMIT_GROUND_Z1);
+    String z2Status = getZAxisStatus(LIMIT_UP_Z2, LIMIT_DOWN_Z2, LIMIT_GROUND_Z2);
+    status += "\"Z1_axis\":\"" + z1Status + "\",";
+    status += "\"Z2_axis\":\"" + z2Status + "\"}";
+    statusClient.println(status);
+  }
+}
+
+bool detectHomePosition() {
+  bool xHome  = (digitalRead(LIMIT_RIGHT) == LOW);
+  bool z1Home = (digitalRead(LIMIT_UP_Z1) == LOW);
+  bool z2Home = (digitalRead(LIMIT_UP_Z2) == LOW);
+  return (xHome && z1Home && z2Home);
 }
 
 // Helper function to determine axis status based on limit switches
@@ -130,43 +211,6 @@ bool isEncoderMoving() {
   return moving;
 }
 
-void setup() {
- Serial.begin(115200);
- Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
- Serial1.begin(9600); // communication with Nano over Serial1 (RX on pin 24)
-while (!Serial && millis() < 3000);  // ✅ good
-  Serial.println("Initializing Ethernet...");
-  
-  Ethernet.begin(mac, ip);
-  commandServer.begin();
-  statusServer.begin();
-  responseServer.begin();
-  
-  Serial.println("Teensy Ethernet Servers Started.");
-
-  // Set pin modes
-  pinMode(STEP_PIN_Z1, OUTPUT);
-  pinMode(DIR_PIN_Z1, OUTPUT);
-  pinMode(STEP_PIN_Z2, OUTPUT);
-  pinMode(DIR_PIN_Z2, OUTPUT);
-  pinMode(ENABLE_Z1, OUTPUT);
-  pinMode(ENABLE_Z2, OUTPUT);
-  pinMode(STEP_PIN_X, OUTPUT);
-  pinMode(DIR_PIN_X, OUTPUT);
-  pinMode(ENABLE_X, OUTPUT);
-  pinMode(LIMIT_UP_Z1, INPUT_PULLUP);
-  pinMode(LIMIT_DOWN_Z1, INPUT_PULLUP);
-  pinMode(LIMIT_UP_Z2, INPUT_PULLUP);
-  pinMode(LIMIT_DOWN_Z2, INPUT_PULLUP);
-  pinMode(LIMIT_GROUND_Z1, INPUT_PULLUP);
-  pinMode(LIMIT_GROUND_Z2, INPUT_PULLUP);
-  pinMode(LIMIT_LEFT, INPUT_PULLUP);
-  pinMode(LIMIT_RIGHT, INPUT_PULLUP);
-  pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);  // Button active LOW
-}
-
-// Checks if the incoming command is valid.
-
 
 void readEncoder() {
   // Receive continuous angle and velocity from the Nano
@@ -189,6 +233,7 @@ void readEncoder() {
     offset = 0.0f;
   }
 }
+
 void detectErrors() {
   if (isXMotorRunning && millis() - motorStartTime > 3000) {
     int currentoffset = offset;
@@ -203,18 +248,10 @@ void detectErrors() {
   }
 }
 
-void sendStatusUpdate() {
-  if (statusClient && statusClient.connected()) {
-    String status = "{";
-    status += "\"X_axis\":\"" + getXAxisStatus() + "\",";
-    status += "\"offset\":\"" + String(offset) + "\",";
-    status += "\"home_position\":\"" + String(isHomed ? "Yes" : "No") + "\",";
-    String z1Status = getZAxisStatus(LIMIT_UP_Z1, LIMIT_DOWN_Z1, LIMIT_GROUND_Z1);
-    String z2Status = getZAxisStatus(LIMIT_UP_Z2, LIMIT_DOWN_Z2, LIMIT_GROUND_Z2);
-    status += "\"Z1_axis\":\"" + z1Status + "\",";
-    status += "\"Z2_axis\":\"" + z2Status + "\"}";
-    statusClient.println(status);
-  }
+int speedToDelayUs(int speedMmPerS) {
+  if (speedMmPerS <= 0) return 200;
+  float delayUs = 1000000.0f / (speedMmPerS * STEPS_PER_MM);
+  return (int)delayUs;
 }
 
 
@@ -341,16 +378,10 @@ void startHoming(int stepDelayUs = 200) {
 }
 void executeClearIceCommand() {
   runXAxis(500, true);  // Move to the end
-  delay(2000);
+  delay(1000);
   runXAxis(500, false); // Return home
 }
 
-bool detectHomePosition() {
-  bool xHome  = (digitalRead(LIMIT_RIGHT) == LOW);
-  bool z1Home = (digitalRead(LIMIT_UP_Z1) == LOW);
-  bool z2Home = (digitalRead(LIMIT_UP_Z2) == LOW);
-  return (xHome && z1Home && z2Home);
-}
 bool isValidCommand(String command) {
   // Allow PRESET commands by default.
   if (command.startsWith("PRESET(")) {
@@ -407,37 +438,6 @@ void processNumberCommand(String command) {
     responseClient.println(" is received.");
   }
 }
-
-// Poll the persistent command connection for an emergency stop command.
-void pollCommandForEmergencyStop() {
-  // First: check hardware emergency stop button on pin 22
-  static bool buttonWasPressed = false;
-  bool buttonIsPressed = digitalRead(22) == LOW;
-
-  if (buttonIsPressed && !buttonWasPressed) {
-    emergencyStopActive = true;
-    Serial.println("Emergency stop triggered by hardware button.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Hardware Emergency Stop Activated.");
-    }
-  }
-
-  buttonWasPressed = buttonIsPressed;
-
-  // Then: check if command was received from Ethernet
-  if (commandClient && commandClient.available() > 0) {
-    String newCmd = commandClient.readStringUntil('\n');
-    newCmd.trim();
-    if (newCmd == "STOP" || newCmd == "EMERGENCY_STOP") {
-      emergencyStopActive = true;
-      Serial.println("Emergency stop command received during operation.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Emergency Stop Activated.");
-      }
-    }
-  }
-}
-
 
 void processCommand(String command) {
   Serial.print("Received command: ");
