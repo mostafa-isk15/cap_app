@@ -122,7 +122,7 @@ while (!Serial && millis() < 3000);  // ✅ good
 void pollCommandForEmergencyStop() {
   // First: check hardware emergency stop button on pin 22
   static bool buttonWasPressed = false;
-  bool buttonIsPressed = digitalRead(22) == LOW;
+  bool buttonIsPressed = digitalRead(EMERGENCY_STOP_PIN) == LOW;
 
   if (buttonIsPressed && !buttonWasPressed) {
     emergencyStopActive = true;
