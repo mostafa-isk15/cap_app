@@ -52,7 +52,7 @@ const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
 #define ENABLE_X 10 // not used
 
 // Limit switch pins
-#define EMERGENCY_STOP_PIN 15
+//#define EMERGENCY_STOP_PIN 15
 #define LIMIT_GROUND_Z1 16
 #define LIMIT_GROUND_Z2 17
 #define LIMIT_UP_Z1 18
@@ -115,38 +115,27 @@ while (!Serial && millis() < 3000);  // ✅ good
   pinMode(LIMIT_GROUND_Z2, INPUT_PULLUP);
   pinMode(LIMIT_LEFT, INPUT_PULLUP);
   pinMode(LIMIT_RIGHT, INPUT_PULLUP);
-  pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);  // Button active LOW
 }
 
-// Poll the persistent command connection for an emergency stop command.
-void pollCommandForEmergencyStop() {
-  // First: check hardware emergency stop button on pin 22
-  static bool buttonWasPressed = false;
-  bool buttonIsPressed = digitalRead(EMERGENCY_STOP_PIN) == LOW;
-
-  if (buttonIsPressed && !buttonWasPressed) {
-    emergencyStopActive = true;
-    Serial.println("Emergency stop triggered by hardware button.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Hardware Emergency Stop Activated.");
-    }
+template <typename T>
+void logPrintln(const T &msg) {
+  Serial.println(msg);
+  if (responseClient && responseClient.connected()) {
+    responseClient.println(msg);
   }
+} 
 
-  buttonWasPressed = buttonIsPressed;
-
-  // Then: check if command was received from Ethernet
-  if (commandClient && commandClient.available() > 0) {
+void pollCommandForEmergencyStop() {
+  if (commandClient && commandClient.available()) {
     String newCmd = commandClient.readStringUntil('\n');
     newCmd.trim();
     if (newCmd == "STOP" || newCmd == "EMERGENCY_STOP") {
       emergencyStopActive = true;
-      Serial.println("Emergency stop command received during operation.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Emergency Stop Activated.");
-      }
+      logPrintln("LOG: Emergency stop command received during operation.");
     }
   }
 }
+
 
 void sendStatusUpdate() {
   if (statusClient && statusClient.connected()) {
@@ -239,10 +228,7 @@ void detectErrors() {
     int currentoffset = offset;
     // If the encoder hasn't changed significantly, flag an error.
     if (currentoffset == offset) {
-      Serial.println("ERROR: X-axis motor frozen.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("ERROR: X-axis motor frozen.");
-      }
+    logPrintln("ERROR: X-axis motor frozen.");
       isXMotorRunning = false;
     }
   }
@@ -255,86 +241,89 @@ int speedToDelayUs(int speedMmPerS) {
 }
 
 
+// Run Z-axis motors. `motor` = 0 for both, 1 for Z1, 2 for Z2. 
+// When `steps` is negative, the motor(s) move until their respective limit switches are hit.
 void runZAxis(bool direction, int motor, int steps = -1, int stepDelayUs = 200) {
-  int stepPin = (motor == 1) ? STEP_PIN_Z1 : STEP_PIN_Z2;
-  int dirPin = (motor == 1) ? DIR_PIN_Z1 : DIR_PIN_Z2;
-  int enablePin = (motor == 1) ? ENABLE_Z1 : ENABLE_Z2;
-  int limitUp = (motor == 1) ? LIMIT_UP_Z1 : LIMIT_UP_Z2;
-  int limitDown = (motor == 1) ? LIMIT_DOWN_Z1 : LIMIT_DOWN_Z2;
-  int groundLimit = (motor == 1) ? LIMIT_GROUND_Z1 : LIMIT_GROUND_Z2;
-  
-  digitalWrite(dirPin, direction);
-  digitalWrite(enablePin, LOW);
-  
-   int i = 0;
-  while (true) {
-    if (steps >= 0 && i >= steps) break;  // Completed requested steps
+  if (motor == 0) {
+    // Run both Z motors simultaneously.
+    digitalWrite(DIR_PIN_Z1, direction);
+    digitalWrite(DIR_PIN_Z2, direction);
+    digitalWrite(ENABLE_Z1, LOW);
+    digitalWrite(ENABLE_Z2, LOW);
 
-    bool limitReached = false;
-    if (direction) {
-      limitReached = (digitalRead(limitUp) == LOW);
-    } else {
-      limitReached = (digitalRead(limitDown) == LOW || digitalRead(groundLimit) == LOW);
+    int i = 0;
+    while (true) {
+      if (steps >= 0 && i >= steps) break;
+
+      bool limit1 = direction ? (digitalRead(LIMIT_UP_Z1) == LOW)
+                              : (digitalRead(LIMIT_DOWN_Z1) == LOW || digitalRead(LIMIT_GROUND_Z1) == LOW);
+      bool limit2 = direction ? (digitalRead(LIMIT_UP_Z2) == LOW)
+                              : (digitalRead(LIMIT_DOWN_Z2) == LOW || digitalRead(LIMIT_GROUND_Z2) == LOW);
+
+      if (steps < 0 && limit1 && limit2) break;
+
+      pollCommandForEmergencyStop();
+      if (emergencyStopActive) break;
+
+      if (!limit1) digitalWrite(STEP_PIN_Z1, HIGH);
+      if (!limit2) digitalWrite(STEP_PIN_Z2, HIGH);
+      delayMicroseconds(stepDelayUs);
+      digitalWrite(STEP_PIN_Z1, LOW);
+      digitalWrite(STEP_PIN_Z2, LOW);
+      delayMicroseconds(stepDelayUs);
+
+      if (steps >= 0) i++;
     }
-    if (limitReached) {
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Z-axis limit reached. Stopping movement.");
+
+    digitalWrite(ENABLE_Z1, HIGH);
+    digitalWrite(ENABLE_Z2, HIGH);
+  } else {
+    int stepPin = (motor == 1) ? STEP_PIN_Z1 : STEP_PIN_Z2;
+    int dirPin = (motor == 1) ? DIR_PIN_Z1 : DIR_PIN_Z2;
+    int enablePin = (motor == 1) ? ENABLE_Z1 : ENABLE_Z2;
+    int limitUp = (motor == 1) ? LIMIT_UP_Z1 : LIMIT_UP_Z2;
+    int limitDown = (motor == 1) ? LIMIT_DOWN_Z1 : LIMIT_DOWN_Z2;
+    int groundLimit = (motor == 1) ? LIMIT_GROUND_Z1 : LIMIT_GROUND_Z2;
+
+    digitalWrite(dirPin, direction);
+    digitalWrite(enablePin, LOW);
+
+    int i = 0;
+    while (true) {
+      if (steps >= 0 && i >= steps) break;
+
+      bool limitReached = direction ? (digitalRead(limitUp) == LOW)
+                                    : (digitalRead(limitDown) == LOW || digitalRead(groundLimit) == LOW);
+      if (limitReached) {
+        if (responseClient && responseClient.connected()) {
+          responseClient.println("LOG: Z-axis limit reached. Stopping movement.");
+        }
+        break;
       }
-         break;
+      pollCommandForEmergencyStop();
+      if (emergencyStopActive) break;
+
+      digitalWrite(stepPin, HIGH);
+      delayMicroseconds(stepDelayUs);
+      digitalWrite(stepPin, LOW);
+      delayMicroseconds(stepDelayUs);
+
+      if (steps >= 0) i++;
     }
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) break;
-    
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(stepDelayUs);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(stepDelayUs);
-    
-    if (steps >= 0) i++;  // Only count steps if steps parameter specified
+
+    digitalWrite(enablePin, HIGH);
   }
-  
-  digitalWrite(enablePin, HIGH);
-}
-// Run both Z motors simultaneously. When 'steps' is negative, move each motor
-// until its respective limit is hit. Otherwise, move the specified number of
-// steps while monitoring the limits.
-void runDualZAxis(bool direction, int steps = -1, int stepDelayUs = 200) {
-  digitalWrite(DIR_PIN_Z1, direction);
-  digitalWrite(DIR_PIN_Z2, direction);
-  digitalWrite(ENABLE_Z1, LOW);
-  digitalWrite(ENABLE_Z2, LOW);
-
-  int i = 0;
-  while (true) {
-    if (steps >= 0 && i >= steps) break;
-
-    bool limit1 = direction ? (digitalRead(LIMIT_UP_Z1) == LOW)
-                            : (digitalRead(LIMIT_DOWN_Z1) == LOW || digitalRead(LIMIT_GROUND_Z1) == LOW);
-    bool limit2 = direction ? (digitalRead(LIMIT_UP_Z2) == LOW)
-                            : (digitalRead(LIMIT_DOWN_Z2) == LOW || digitalRead(LIMIT_GROUND_Z2) == LOW);
-
-    if (steps < 0 && limit1 && limit2) break;
-    if (steps >= 0 && limit1 && limit2 && i >= steps) break;
-
-    pollCommandForEmergencyStop();
-    if (emergencyStopActive) break;
-
-    if (!limit1) digitalWrite(STEP_PIN_Z1, HIGH);
-    if (!limit2) digitalWrite(STEP_PIN_Z2, HIGH);
-    delayMicroseconds(stepDelayUs);
-    digitalWrite(STEP_PIN_Z1, LOW);
-    digitalWrite(STEP_PIN_Z2, LOW);
-    delayMicroseconds(stepDelayUs);
-
-    if (steps >= 0) i++;
-    if (steps < 0 && limit1 && limit2) break;
-  }
-
-  digitalWrite(ENABLE_Z1, HIGH);
-  digitalWrite(ENABLE_Z2, HIGH);
-}
 
 void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
+  
+    if (/*digitalRead(LIMIT_GROUND_Z1) == LOW || */digitalRead(LIMIT_GROUND_Z2) == LOW) {
+    Serial.println("cant move x axis the plates are on the ground");
+    if (responseClient && responseClient.connected()) {
+      responseClient.println("cant move x axis the plates are on the ground");
+    }
+    return;
+  }
+
   digitalWrite(DIR_PIN_X, direction);
   digitalWrite(ENABLE_X, LOW);
   isXMotorRunning = true;
@@ -367,7 +356,7 @@ void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
 
 void startHoming(int stepDelayUs = 200) {
   // First raise both Z axes simultaneously to their upper limits
-  runDualZAxis(true, -1, stepDelayUs);
+  runZAxis(true, 0, -1, stepDelayUs);
 
   // Then move X axis to the right (home) limit
   while (digitalRead(LIMIT_RIGHT) != LOW) {
@@ -377,6 +366,7 @@ void startHoming(int stepDelayUs = 200) {
   }
 }
 void executeClearIceCommand() {
+  /*calibrate*/
   runXAxis(500, true);  // Move to the end
   delay(1000);
   runXAxis(500, false); // Return home
@@ -418,6 +408,7 @@ bool canExecuteCommand(String command) {
 }
 
 // Checks if the command string is a single digit (from 1 to 9)
+/*calibrate*/ 
 bool isNumericCommand(String command) {
   if (command.length() == 1) {
     char c = command.charAt(0);
@@ -427,6 +418,7 @@ bool isNumericCommand(String command) {
 }
 
 // Process a numeric command (e.g., from a drop-down list).
+/*calibrate*/
 void processNumberCommand(String command) {
   int number = command.toInt();
   Serial.print("Number ");
@@ -444,15 +436,15 @@ void processCommand(String command) {
   Serial.println(command);
   
   // Process numeric commands immediately.
-  if (isNumericCommand(command)) {
+/*calibrate*/  if (isNumericCommand(command)) {
     processNumberCommand(command);
     return;
   }
   
-  if (command == "GET_STATUS") {
+/*  if (command == "GET_STATUS") {
     sendStatusUpdate();
     return;
-  }
+  }*/
   
   // Handle MOVE_LEFT with parameters like "MOVE_LEFT s1000 v50"
   if (command.startsWith("MOVE_LEFT")) {
@@ -549,15 +541,32 @@ void processCommand(String command) {
     activeCommand = "";
     
   } else if (command.startsWith("MOVE_UP")) {  // Generic MOVE_UP: move both Z axes upward.
+    int steps = -1;
     int speed = 50;
     String params = command.substring(String("MOVE_UP").length());
     params.trim();
-    if (params.startsWith("v")) speed = params.substring(1).toInt();
-    Serial.println("LOG: Starting MOVE_UP...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_UP...");
+    size_t idx = 0;
+    while (idx < params.length()) {
+      int space = params.indexOf(' ', idx);
+      if (space == -1) space = params.length();
+      String token = params.substring(idx, space);
+      if (token.startsWith("s")) steps = token.substring(1).toInt();
+      else if (token.startsWith("v")) speed = token.substring(1).toInt();
+      idx = space + 1;
     }
-    runDualZAxis(true, -1, speedToDelayUs(speed));  // Move both Z axes upward simultaneously.
+    if (steps <= 0) {
+      Serial.println("LOG: Starting MOVE_UP (continuous)...");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Starting MOVE_UP (continuous)...");
+      }
+      runZAxis(true, 0, -1, speedToDelayUs(speed));
+    } else {
+      Serial.println("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
+      }
+      runZAxis(true, 0, steps, speedToDelayUs(speed));
+    }
     Serial.println("LOG: Done MOVE_UP");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_UP");
@@ -565,15 +574,32 @@ void processCommand(String command) {
     activeCommand = "";
     return;
   } else if (command.startsWith("MOVE_DOWN")) {  // Generic MOVE_DOWN: move both Z axes downward.
+    int steps = -1;
     int speed = 50;
     String params = command.substring(String("MOVE_DOWN").length());
     params.trim();
-    if (params.startsWith("v")) speed = params.substring(1).toInt();
-    Serial.println("LOG: Starting MOVE_DOWN...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_DOWN...");
+    size_t idx = 0;
+    while (idx < params.length()) {
+      int space = params.indexOf(' ', idx);
+      if (space == -1) space = params.length();
+      String token = params.substring(idx, space);
+      if (token.startsWith("s")) steps = token.substring(1).toInt();
+      else if (token.startsWith("v")) speed = token.substring(1).toInt();
+      idx = space + 1;
     }
-    runDualZAxis(false, -1, speedToDelayUs(speed)); // Move both Z axes downward simultaneously.
+    if (steps <= 0) {
+      Serial.println("LOG: Starting MOVE_DOWN (continuous)...");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Starting MOVE_DOWN (continuous)...");
+      }
+      runZAxis(false, 0, -1, speedToDelayUs(speed));
+    } else {
+      Serial.println("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
+      if (responseClient && responseClient.connected()) {
+        responseClient.println("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
+      }
+      runZAxis(false, 0, steps, speedToDelayUs(speed));
+    }
     Serial.println("LOG: Done MOVE_DOWN");
     if (responseClient && responseClient.connected()) {
       responseClient.println("LOG: Done MOVE_DOWN");
@@ -845,6 +871,7 @@ void loop() {
       }
     }
   }
+
   
   isHomed = detectHomePosition();
   readEncoder();
