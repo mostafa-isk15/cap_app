@@ -80,8 +80,9 @@ float totalAngle = 0.0;            // absolute angle received from Nano
 float angularVelocity = 0.0;            // angular velocity from Nano
 const uint8_t SYNC = 0xFF;
 volatile float offset = 0.0;       // final linear offset (mm)
-float encoderZeroAngle = 0.0;  
+float encoderZeroAngle = 0.0;
 const float STEPS_PER_MM = 100.0; // change according to the dip switches on the driver (microstepping) and ball screw pitch
+const unsigned long ENCODER_READ_TIMEOUT_MS = 100; // maximum wait for encoder data
 
 void setup() {
  Serial.begin(115200);
@@ -205,8 +206,12 @@ void readEncoder() {
   // Receive continuous angle and velocity from the Nano
   if (Serial1.available() && Serial1.peek() == SYNC) {
     Serial1.read();  // consume marker
-    // wait for 8 bytes (two floats)
+    // wait for 8 bytes (two floats) with timeout to avoid blocking
+    unsigned long start = millis();
     while (Serial1.available() < int(sizeof(float) * 2)) {
+      if (millis() - start > ENCODER_READ_TIMEOUT_MS) {
+        return; // abort if data not received in time
+      }
     }
     Serial1.readBytes((char *)&totalAngle, sizeof(totalAngle));
     Serial1.readBytes((char *)&angularVelocity, sizeof(angularVelocity));
