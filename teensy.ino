@@ -415,6 +415,60 @@ void processNumberCommand(String command) {
     logPrintln("Number " + number + " is recieved");
 }
 
+// Parse step and speed parameters from a command suffix like "s1000 v50"
+void parseStepSpeed(String params, int &steps, int &speed) {
+  size_t idx = 0;
+  while (idx < params.length()) {
+    int space = params.indexOf(' ', idx);
+    if (space == -1) space = params.length();
+    String token = params.substring(idx, space);
+    if (token.startsWith("s")) {
+      steps = token.substring(1).toInt();
+    } else if (token.startsWith("v")) {
+      speed = token.substring(1).toInt();
+    }
+    idx = space + 1;
+  }
+}
+
+// Generic handler for MOVE_LEFT and MOVE_RIGHT commands
+void handleMoveX(String command, bool moveRight) {
+  if (!canExecuteCommand(command)) return;
+  const char *name = moveRight ? "MOVE_RIGHT" : "MOVE_LEFT";
+  logPrintln(String("LOG: Starting ") + name + "...");
+  int steps = 20000;
+  int speed = 50;
+  String params = command.substring(String(name).length());
+  params.trim();
+  parseStepSpeed(params, steps, speed);
+  if (steps <= 0) steps = 200000;
+  int delayUs = speedToDelayUs(speed);
+  runXAxis(steps, moveRight, delayUs);
+  logPrintln(String("LOG: Done ") + name);
+  activeCommand = "";
+}
+
+// Generic handler for MOVE_* commands affecting the Z axis
+void handleMoveZ(String command, bool up, int axis, const char *name) {
+  if (!canExecuteCommand(command)) return;
+  int steps = -1;
+  int speed = 50;
+  String params = command.substring(String(name).length());
+  params.trim();
+  parseStepSpeed(params, steps, speed);
+  int delayUs = speedToDelayUs(speed);
+  if (steps <= 0) {
+    logPrintln(String("LOG: Starting ") + name + " (continuous)...");
+    runZAxis(up, axis, -1, delayUs);
+  } else {
+    logPrintln(String("LOG: Starting ") + name + " for " + String(steps) + " steps...");
+    runZAxis(up, axis, steps, delayUs);
+  }
+  logPrintln(String("LOG: Done ") + name);
+  activeCommand = "";
+}
+
+
 void processCommand(String command) {
   Serial.print("Received command: ");
   Serial.println(command);
@@ -430,53 +484,45 @@ void processCommand(String command) {
     return;
   }*/
   
-  // Handle MOVE_LEFT with parameters like "MOVE_LEFT s1000 v50"
+ // Handle movement commands first
   if (command.startsWith("MOVE_LEFT")) {
-    if (!canExecuteCommand(command)) return;
-    logPrintln("LOG: Starting MOVE_LEFT...");
-    int steps = 20000;
-    int speed = 50;
-    String params = command.substring(String("MOVE_LEFT").length());
-    params.trim();
-    size_t idx = 0;
-    while (idx < params.length()) {
-      int space = params.indexOf(' ', idx);
-      if (space == -1) space = params.length();
-      String token = params.substring(idx, space);
-      if (token.startsWith("s")) steps = token.substring(1).toInt();
-      else if (token.startsWith("v")) speed = token.substring(1).toInt();
-      idx = space + 1;
-    }
-    if (steps <= 0) steps = 200000;
-    int delayUs = speedToDelayUs(speed);
-    runXAxis(steps, false, delayUs);
-    logPrintln("LOG: Done MOVE_LEFT");
-    activeCommand = "";
+    handleMoveX(command, false);
+
+ return;
+  }
+
+  if (command.startsWith("MOVE_RIGHT")) {
+    handleMoveX(command, true);
     return;
   }
-  
-  // Handle MOVE_RIGHT with parameters like "MOVE_RIGHT s1000 v50"
-  if (command.startsWith("MOVE_RIGHT")) {
-    if (!canExecuteCommand(command)) return;
-    logPrintln("LOG: Starting MOVE_RIGHT...");
-    int steps = 20000;
-    int speed = 50;
-    String params = command.substring(String("MOVE_RIGHT").length());
-    params.trim();
-    size_t idx = 0;
-    while (idx < params.length()) {
-      int space = params.indexOf(' ', idx);
-      if (space == -1) space = params.length();
-      String token = params.substring(idx, space);
-      if (token.startsWith("s")) steps = token.substring(1).toInt();
-      else if (token.startsWith("v")) speed = token.substring(1).toInt();
-      idx = space + 1;
-    }
-    if (steps <= 0) steps = 200000;
-    int delayUs = speedToDelayUs(speed);
-    runXAxis(steps, true, delayUs);
-    logPrintln("LOG: Done MOVE_RIGHT");
-    activeCommand = "";
+
+  if (command.startsWith("MOVE_UP")) {
+    handleMoveZ(command, true, 0, "MOVE_UP");
+    return;
+  }
+
+  if (command.startsWith("MOVE_DOWN")) {
+    handleMoveZ(command, false, 0, "MOVE_DOWN");
+    return;
+  }
+
+  if (command.startsWith("MOVE_Z1_UP")) {
+    handleMoveZ(command, true, 1, "MOVE_Z1_UP");
+    return;
+  }
+
+  if (command.startsWith("MOVE_Z1_DOWN")) {
+    handleMoveZ(command, false, 1, "MOVE_Z1_DOWN");
+    return;
+  }
+
+  if (command.startsWith("MOVE_Z2_UP")) {
+    handleMoveZ(command, true, 2, "MOVE_Z2_UP");
+    return;
+  }
+
+  if (command.startsWith("MOVE_Z2_DOWN")) {
+    handleMoveZ(command, false, 2, "MOVE_Z2_DOWN");
     return;
   }
   
@@ -502,158 +548,6 @@ void processCommand(String command) {
     startHoming(speedToDelayUs(speed));
     logPrintln("LOG: Done HOMING...");
     activeCommand = "";
-    
-  } else if (command.startsWith("MOVE_UP")) {  // Generic MOVE_UP: move both Z axes upward.
-    int steps = -1;
-    int speed = 50;
-    String params = command.substring(String("MOVE_UP").length());
-    params.trim();
-    size_t idx = 0;
-    while (idx < params.length()) {
-      int space = params.indexOf(' ', idx);
-      if (space == -1) space = params.length();
-      String token = params.substring(idx, space);
-      if (token.startsWith("s")) steps = token.substring(1).toInt();
-      else if (token.startsWith("v")) speed = token.substring(1).toInt();
-      idx = space + 1;
-    }
-    if (steps <= 0) {
-    logPrintln("LOG: Starting MOVE_UP (continuous)...");
-      runZAxis(true, 0, -1, speedToDelayUs(speed));
-    } else {
-    logPrintln("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
-      runZAxis(true, 0, steps, speedToDelayUs(speed));
-    }
-    logPrintln("LOG: Done MOVE_UP");
-    activeCommand = "";
-    return;
-  } else if (command.startsWith("MOVE_DOWN")) {  // Generic MOVE_DOWN: move both Z axes downward.
-    int steps = -1;
-    int speed = 50;
-    String params = command.substring(String("MOVE_DOWN").length());
-    params.trim();
-    size_t idx = 0;
-    while (idx < params.length()) {
-      int space = params.indexOf(' ', idx);
-      if (space == -1) space = params.length();
-      String token = params.substring(idx, space);
-      if (token.startsWith("s")) steps = token.substring(1).toInt();
-      else if (token.startsWith("v")) speed = token.substring(1).toInt();
-      idx = space + 1;
-    }
-    if (steps <= 0) {
-    logPrintln("LOG: Starting MOVE_DOWN (continuous)...");
-      runZAxis(false, 0, -1, speedToDelayUs(speed));
-    } else {
-    logPrintln("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
-      runZAxis(false, 0, steps, speedToDelayUs(speed));
-    }
-    logPrintln("LOG: Done MOVE_DOWN");
-    activeCommand = "";
-    return;
-  } else if (command.startsWith("MOVE_Z1_UP")) {
-    int steps = -1;
-  int speed = 50;
-  String params = command.substring(String("MOVE_Z1_UP").length());
-  params.trim();
-  size_t idx = 0;
-  while (idx < params.length()) {
-    int space = params.indexOf(' ', idx);
-    if (space == -1) space = params.length();
-    String token = params.substring(idx, space);
-    if (token.startsWith("s")) steps = token.substring(1).toInt();
-    else if (token.startsWith("v")) speed = token.substring(1).toInt();
-    idx = space + 1;
-  }
-  if (steps <= 0) {
-    logPrintln("LOG: Starting MOVE_Z1_UP (continuous)...");
-    runZAxis(true, 1, -1, speedToDelayUs(speed));
-  } else {
-    logPrintln("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
-    runZAxis(true, 1, steps, speedToDelayUs(speed));
-  }
-    logPrintln("LOG: Done MOVE_Z1_UP");
-  activeCommand = "";
-  return;
-
-  } else if (command.startsWith("MOVE_Z1_DOWN")) {
-  int steps = -1;
-  int speed = 50;
-  String params = command.substring(String("MOVE_Z1_DOWN").length());
-  params.trim();
-  size_t idx = 0;
-  while (idx < params.length()) {
-    int space = params.indexOf(' ', idx);
-    if (space == -1) space = params.length();
-    String token = params.substring(idx, space);
-    if (token.startsWith("s")) steps = token.substring(1).toInt();
-    else if (token.startsWith("v")) speed = token.substring(1).toInt();
-    idx = space + 1;
-  }
-  if (steps <= 0) {
-    logPrintln("LOG: Starting MOVE_Z1_DOWN (continuous)...");
-    runZAxis(false, 1, -1, speedToDelayUs(speed));
-  } else {
-    logPrintln("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
-    runZAxis(false, 1, steps, speedToDelayUs(speed));
-  }
-  Serial.println("LOG: Done MOVE_Z1_DOWN");
-  if (responseClient && responseClient.connected()) {
-    responseClient.println("LOG: Done MOVE_Z1_DOWN");
-  }
-  activeCommand = "";
-  return;
-
- } else if (command.startsWith("MOVE_Z2_UP")) {
-   int steps = -1;
-  int speed = 50;
-  String params = command.substring(String("MOVE_Z2_UP").length());
-  params.trim();
-  size_t idx = 0;
-  while (idx < params.length()) {
-    int space = params.indexOf(' ', idx);
-    if (space == -1) space = params.length();
-    String token = params.substring(idx, space);
-    if (token.startsWith("s")) steps = token.substring(1).toInt();
-    else if (token.startsWith("v")) speed = token.substring(1).toInt();
-    idx = space + 1;
-  }
-  if (steps <= 0) {
-
-    logPrintln("LOG: Starting MOVE_Z2_UP (continuous)...");
-    runZAxis(true, 2, -1, speedToDelayUs(speed));
-  } else {
-    logPrintln("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
-    runZAxis(true, 2, steps, speedToDelayUs(speed));
-  }
-    logPrintln("LOG: Done MOVE_Z2_UP");
-  activeCommand = "";
-  return;
-
- } else if (command.startsWith("MOVE_Z2_DOWN")) {
-  int steps = -1;
-  int speed = 50;
-  String params = command.substring(String("MOVE_Z2_DOWN").length());
-  params.trim();
-  size_t idx = 0;
-  while (idx < params.length()) {
-    int space = params.indexOf(' ', idx);
-    if (space == -1) space = params.length();
-    String token = params.substring(idx, space);
-    if (token.startsWith("s")) steps = token.substring(1).toInt();
-    else if (token.startsWith("v")) speed = token.substring(1).toInt();
-    idx = space + 1;
-  }
-  if (steps <= 0) {
-    logPrintln("LOG: Starting MOVE_Z2_DOWN (continuous)...");
-    runZAxis(false, 2, -1, speedToDelayUs(speed));
-  } else {
-    logPrintln("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
-    runZAxis(false, 2, steps, speedToDelayUs(speed));
-  }
-    logPrintln("LOG: Done MOVE_Z2_DOWN");
-  activeCommand = "";
-  return;
 
   } else if (command == "CLEAR_ICE") {
     logPrintln("LOG: Starting CLEAR_ICE...");
