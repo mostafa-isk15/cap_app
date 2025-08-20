@@ -88,7 +88,7 @@ void setup() {
  Serial.begin(115200);
  Wire1.begin();  // initialize I²C on pins 38/37 for AS5600
  Serial1.begin(9600); // communication with Nano over Serial1 (RX on pin 24)
-while (!Serial && millis() < 3000);  // ✅ good
+while (!Serial && millis() < 3000);
   Serial.println("Initializing Ethernet...");
   Ethernet.init(ETH_CS);   // tell Ethernet library to use that pin
   Ethernet.begin(mac, ip);
@@ -370,7 +370,7 @@ void executeClearIceCommand() {
 
 bool isValidCommand(String command) {
   // Allow PRESET commands by default.
-  if (command.startsWith("PRESET(")) {
+  if (command.startsWith("PRESET")) {
     return true;
   }
   for (int i = 0; i < numValidCommands; i++) {
@@ -468,6 +468,62 @@ void handleMoveZ(String command, bool up, int axis, const char *name) {
   activeCommand = "";
 }
 
+// Handler for HOME command
+void handleHome(String command) {
+  if (!canExecuteCommand(command)) return;
+  int speed = 50;
+  String params = command.substring(String("HOME").length());
+  params.trim();
+  if (params.startsWith("v")) speed = params.substring(1).toInt();
+  logPrintln("LOG: Starting HOMING...");
+  startHoming(speedToDelayUs(speed));
+  logPrintln("LOG: Done HOMING...");
+  activeCommand = "";
+}
+
+// Handler for PRESET command
+void handlePreset(String command) {
+  if (!canExecuteCommand(command)) return;
+  int startIdx = command.indexOf('(');
+  int endIdx = command.indexOf(')', startIdx);
+  if (startIdx == -1 || endIdx == -1 || endIdx <= startIdx + 1) {
+    logPrintln("ERROR: Invalid PRESET command format.");
+    activeCommand = "";
+    return;
+  }
+  String offsetStr = command.substring(startIdx + 1, endIdx);
+  int targetOffsetSteps = offsetStr.toInt();
+
+  int speed = 50;
+  String params = command.substring(endIdx + 1);
+  params.trim();
+  if (params.startsWith("v")) speed = params.substring(1).toInt();
+
+  int delayUs = speedToDelayUs(speed);
+  float currentSteps = offset * STEPS_PER_MM;
+  float deltaSteps = targetOffsetSteps - currentSteps;
+
+  if (deltaSteps == 0) {
+    logPrintln("LOG: Already at target offset.");
+    activeCommand = "";
+    return;
+  }
+
+  logPrintln("LOG: Starting PRESET command: Lifting Z2...");
+  runZAxis(true, 2, -1, delayUs);
+  int stepCount = (int)fabsf(deltaSteps);
+  if (deltaSteps > 0) {
+    logPrintln(String("LOG: Moving LEFT ") + stepCount + " steps.");
+    runXAxis(stepCount, false, delayUs);
+  } else {
+    logPrintln(String("LOG: Moving RIGHT ") + stepCount + " steps.");
+    runXAxis(stepCount, true, delayUs);
+  }
+  logPrintln("LOG: Lowering Z2 to complete PRESET command.");
+  runZAxis(false, 2, -1, delayUs);
+  logPrintln("LOG: PRESET command done.");
+  activeCommand = "";
+}
 
 void processCommand(String command) {
   Serial.print("Received command: ");
@@ -529,6 +585,19 @@ void processCommand(String command) {
   // Process other commands.
   if (!canExecuteCommand(command)) return;
   
+  if (command.startsWith("PRESET")) {
+    handlePreset(command);
+    return;
+  }
+
+  if (command.startsWith("HOME")) {
+    handleHome(command);
+    return;
+  }
+
+  // Process other commands.
+  if (!canExecuteCommand(command)) return;
+
   if (command == "STOP" || command == "EMERGENCY_STOP") {
     emergencyStopActive = true;
     activeCommand = "";
@@ -539,75 +608,11 @@ void processCommand(String command) {
     delay(100);  // Short delay to process the stop
     emergencyStopActive = false; // Reset for future commands
 
-  } else if (command.startsWith("HOME")) {
-    int speed = 50;
-    String params = command.substring(String("HOME").length());
-    params.trim();
-    if (params.startsWith("v")) speed = params.substring(1).toInt();
-    logPrintln("LOG: Starting HOMING...");
-    startHoming(speedToDelayUs(speed));
-    logPrintln("LOG: Done HOMING...");
-    activeCommand = "";
-
   } else if (command == "CLEAR_ICE") {
     logPrintln("LOG: Starting CLEAR_ICE...");
     executeClearIceCommand();
     logPrintln("LOG: Done CLEAR_ICE");
     activeCommand = "";
-    
-  } else if (command.startsWith("PRESET")) { // PRESET command with optional speed
-    int startIdx = command.indexOf('(');
-    int endIdx = command.indexOf(')', startIdx);
-    if (startIdx == -1 || endIdx == -1 || endIdx <= startIdx + 1) {
-    logPrintln("ERROR: Invalid PRESET command format.");
-      activeCommand = "";
-      return;
-    }
-    String offsetStr = command.substring(startIdx + 1, endIdx);
-    int targetOffsetSteps = offsetStr.toInt();
-
-    int speed = 50; // default speed in mm/s
-    String params = command.substring(endIdx + 1);
-    params.trim();
-    size_t idx = 0;
-    while (idx < params.length()) {
-      int space = params.indexOf(' ', idx);
-      if (space == -1) space = params.length();
-      String token = params.substring(idx, space);
-      if (token.startsWith("v")) speed = token.substring(1).toInt();
-      idx = space + 1;
-    }
-    int delayUs = speedToDelayUs(speed);
-    // Convert current encoder position (in mm) to steps for accurate delta
-    float currentSteps = offset * STEPS_PER_MM;
-    float deltaSteps = targetOffsetSteps - currentSteps;
-
-    if (deltaSteps == 0) {
-    logPrintln("LOG: Already at target offset.");
-      activeCommand = "";
-      return;
-    }
-    logPrintln("LOG: Starting PRESET command: Lifting Z2...");
-    runZAxis(true, 2, -1, delayUs); // Lift Z2 upward.
-    int stepCount = (int)fabsf(deltaSteps);
-    if (deltaSteps > 0) {
-      Serial.print("LOG: Moving LEFT ");
-      Serial.print(stepCount);
-      Serial.println(" steps.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.print("LOG: Moving LEFT ");
-        responseClient.print(stepCount);
-        responseClient.println(" steps.");
-      }
-      runXAxis(stepCount, false, delayUs); // Move left.
-    } else {
-    logPrintln("LOG: Moving RIGHT "+ stepCount + " steps.");
-      runXAxis(stepCount, true, delayUs); // Move right.
-    }
-    logPrintln("LOG: Lowering Z2 to complete PRESET command.");
-    runZAxis(false, 2, -1, delayUs); // Lower Z2.
-    activeCommand = "";
-    logPrintln("LOG: PRESET command done.");
     
   }
 }
