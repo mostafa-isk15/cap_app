@@ -26,14 +26,14 @@ const char* validCommands[] = {
   "MOVE_UP",
   "MOVE_DOWN",
   "MOVE_LEFT",
-  "MOVE_RIGHT",
+  "MOVE_RIGHT",//swap with move offset increase and decrease
   "CLEAR_ICE",
   "GET_STATUS",
   "MOVE_Z1_UP",
   "MOVE_Z1_DOWN",
   "MOVE_Z2_UP",
   "MOVE_Z2_DOWN",
-  "MOVE_OFFSET_INCREASE",
+  "MOVE_OFFSET_INCREASE", 
   "MOVE_OFFSET_DECREASE"
 };
 const int numValidCommands = sizeof(validCommands) / sizeof(validCommands[0]);
@@ -295,9 +295,7 @@ void runZAxis(bool direction, int motor, int steps = -1, int stepDelayUs = 200) 
       bool limitReached = direction ? (digitalRead(limitUp) == LOW)
                                     : (digitalRead(limitDown) == LOW || digitalRead(groundLimit) == LOW);
       if (limitReached) {
-        if (responseClient && responseClient.connected()) {
-          responseClient.println("LOG: Z-axis limit reached. Stopping movement.");
-        }
+        logPrintln("LOG: Z-axis limit reached. Stopping movement.");
         break;
       }
       pollCommandForEmergencyStop();
@@ -317,10 +315,7 @@ void runZAxis(bool direction, int motor, int steps = -1, int stepDelayUs = 200) 
 void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
   
     if (/*digitalRead(LIMIT_GROUND_Z1) == LOW || */digitalRead(LIMIT_GROUND_Z2) == LOW) {
-    Serial.println("cant move x axis the plates are on the ground");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("cant move x axis the plates are on the ground");
-    }
+    logPrintln("cant move x axis the plates are on the ground");
     return;
   }
 
@@ -331,16 +326,12 @@ void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
   for (int i = 0; i < steps; i++) {
     if (direction) { // moving right
       if (digitalRead(LIMIT_RIGHT) == LOW) {
-        Serial.println("Right limit reached. Stopping X movement.");
-        if (responseClient && responseClient.connected())
-          responseClient.println("LOG: Right limit reached. Stopping X movement.");
+    logPrintln("Right limit reached. Stopping X movement.");
         break;
       }
     } else { // moving left
       if (digitalRead(LIMIT_LEFT) == LOW) {
-        Serial.println("Left limit reached. Stopping X movement.");
-        if (responseClient && responseClient.connected())
-          responseClient.println("LOG: Left limit reached. Stopping X movement.");
+    logPrintln("Left limit reached. Stopping X movement.");
         break;
       }
     }
@@ -388,19 +379,14 @@ bool isValidCommand(String command) {
 
 bool canExecuteCommand(String command) {
   if (!isValidCommand(command)) {
-    Serial.println("ERROR: Command not recognized.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("ERROR: Command not recognized.");
-    }
+    logPrintln("ERROR: Command not recognized.");
     return false;
   }
   if (command == "GET_STATUS" || command == "STOP" || command == "EMERGENCY_STOP")
     return true;
   if (activeCommand != "") {
-    Serial.println("ERROR: Command " + activeCommand + " is in progress.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("ERROR: Command " + activeCommand + " is in progress.");
-    }
+    logPrintln("ERROR: Command " + activeCommand + " is in progress.");
+
     return false;
   }
   activeCommand = command;
@@ -421,14 +407,7 @@ bool isNumericCommand(String command) {
 /*calibrate*/
 void processNumberCommand(String command) {
   int number = command.toInt();
-  Serial.print("Number ");
-  Serial.print(number);
-  Serial.println(" is received.");
-  if (responseClient && responseClient.connected()) {
-    responseClient.print("Number ");
-    responseClient.print(number);
-    responseClient.println(" is received.");
-  }
+    logPrintln("Number " + number + " is recieved");
 }
 
 void processCommand(String command) {
@@ -449,10 +428,7 @@ void processCommand(String command) {
   // Handle MOVE_LEFT with parameters like "MOVE_LEFT s1000 v50"
   if (command.startsWith("MOVE_LEFT")) {
     if (!canExecuteCommand(command)) return;
-    Serial.println("LOG: Starting MOVE_LEFT...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_LEFT...");
-    }
+    logPrintln("LOG: Starting MOVE_LEFT...");
     int steps = 20000;
     int speed = 50;
     String params = command.substring(String("MOVE_LEFT").length());
@@ -469,10 +445,7 @@ void processCommand(String command) {
     if (steps <= 0) steps = 200000;
     int delayUs = speedToDelayUs(speed);
     runXAxis(steps, false, delayUs);
-    Serial.println("LOG: Done MOVE_LEFT");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done MOVE_LEFT");
-    }
+    logPrintln("LOG: Done MOVE_LEFT");
     activeCommand = "";
     return;
   }
@@ -480,10 +453,7 @@ void processCommand(String command) {
   // Handle MOVE_RIGHT with parameters like "MOVE_RIGHT s1000 v50"
   if (command.startsWith("MOVE_RIGHT")) {
     if (!canExecuteCommand(command)) return;
-    Serial.println("LOG: Starting MOVE_RIGHT...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_RIGHT...");
-    }
+    logPrintln("LOG: Starting MOVE_RIGHT...");
     int steps = 20000;
     int speed = 50;
     String params = command.substring(String("MOVE_RIGHT").length());
@@ -500,10 +470,7 @@ void processCommand(String command) {
     if (steps <= 0) steps = 200000;
     int delayUs = speedToDelayUs(speed);
     runXAxis(steps, true, delayUs);
-    Serial.println("LOG: Done MOVE_RIGHT");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done MOVE_RIGHT");
-    }
+    logPrintln("LOG: Done MOVE_RIGHT");
     activeCommand = "";
     return;
   }
@@ -517,10 +484,7 @@ void processCommand(String command) {
     digitalWrite(ENABLE_Z1, HIGH);
     digitalWrite(ENABLE_Z2, HIGH);
     digitalWrite(ENABLE_X, HIGH);
-    Serial.println("LOG: Emergency Stop Activated.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Emergency Stop Activated.");
-    }
+    logPrintln("LOG: Emergency Stop Activated.");
     delay(100);  // Short delay to process the stop
     emergencyStopActive = false; // Reset for future commands
 
@@ -529,15 +493,9 @@ void processCommand(String command) {
     String params = command.substring(String("HOME").length());
     params.trim();
     if (params.startsWith("v")) speed = params.substring(1).toInt();
-    Serial.println("LOG: Starting HOMING...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting HOMING...");
-    }
+    logPrintln("LOG: Starting HOMING...");
     startHoming(speedToDelayUs(speed));
-    Serial.println("LOG: Done HOMING");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done HOMING");
-    }
+    logPrintln("LOG: Done HOMING...");
     activeCommand = "";
     
   } else if (command.startsWith("MOVE_UP")) {  // Generic MOVE_UP: move both Z axes upward.
@@ -555,22 +513,13 @@ void processCommand(String command) {
       idx = space + 1;
     }
     if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_UP (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_UP (continuous)...");
-      }
+    logPrintln("LOG: Starting MOVE_UP (continuous)...");
       runZAxis(true, 0, -1, speedToDelayUs(speed));
     } else {
-      Serial.println("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
-      }
+    logPrintln("LOG: Starting MOVE_UP for " + String(steps) + " steps...");
       runZAxis(true, 0, steps, speedToDelayUs(speed));
     }
-    Serial.println("LOG: Done MOVE_UP");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done MOVE_UP");
-    }
+    logPrintln("LOG: Done MOVE_UP");
     activeCommand = "";
     return;
   } else if (command.startsWith("MOVE_DOWN")) {  // Generic MOVE_DOWN: move both Z axes downward.
@@ -588,22 +537,13 @@ void processCommand(String command) {
       idx = space + 1;
     }
     if (steps <= 0) {
-      Serial.println("LOG: Starting MOVE_DOWN (continuous)...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_DOWN (continuous)...");
-      }
+    logPrintln("LOG: Starting MOVE_DOWN (continuous)...");
       runZAxis(false, 0, -1, speedToDelayUs(speed));
     } else {
-      Serial.println("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
-      }
+    logPrintln("LOG: Starting MOVE_DOWN for " + String(steps) + " steps...");
       runZAxis(false, 0, steps, speedToDelayUs(speed));
     }
-    Serial.println("LOG: Done MOVE_DOWN");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done MOVE_DOWN");
-    }
+    logPrintln("LOG: Done MOVE_DOWN");
     activeCommand = "";
     return;
   } else if (command.startsWith("MOVE_Z1_UP")) {
@@ -621,22 +561,13 @@ void processCommand(String command) {
     idx = space + 1;
   }
   if (steps <= 0) {
-    Serial.println("LOG: Starting MOVE_Z1_UP (continuous)...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z1_UP (continuous)...");
-    }
+    logPrintln("LOG: Starting MOVE_Z1_UP (continuous)...");
     runZAxis(true, 1, -1, speedToDelayUs(speed));
   } else {
-    Serial.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
-    }
+    logPrintln("LOG: Starting MOVE_Z1_UP for " + String(steps) + " steps...");
     runZAxis(true, 1, steps, speedToDelayUs(speed));
   }
-  Serial.println("LOG: Done MOVE_Z1_UP");
-  if (responseClient && responseClient.connected()) {
-    responseClient.println("LOG: Done MOVE_Z1_UP");
-  }
+    logPrintln("LOG: Done MOVE_Z1_UP");
   activeCommand = "";
   return;
 
@@ -655,16 +586,10 @@ void processCommand(String command) {
     idx = space + 1;
   }
   if (steps <= 0) {
-    Serial.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z1_DOWN (continuous)...");
-    }
+    logPrintln("LOG: Starting MOVE_Z1_DOWN (continuous)...");
     runZAxis(false, 1, -1, speedToDelayUs(speed));
   } else {
-    Serial.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
-    }
+    logPrintln("LOG: Starting MOVE_Z1_DOWN for " + String(steps) + " steps...");
     runZAxis(false, 1, steps, speedToDelayUs(speed));
   }
   Serial.println("LOG: Done MOVE_Z1_DOWN");
@@ -690,22 +615,13 @@ void processCommand(String command) {
   }
   if (steps <= 0) {
 
-    Serial.println("LOG: Starting MOVE_Z2_UP (continuous)...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z2_UP (continuous)...");
-    }
+    logPrintln("LOG: Starting MOVE_Z2_UP (continuous)...");
     runZAxis(true, 2, -1, speedToDelayUs(speed));
   } else {
-    Serial.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
-    }
+    logPrintln("LOG: Starting MOVE_Z2_UP for " + String(steps) + " steps...");
     runZAxis(true, 2, steps, speedToDelayUs(speed));
   }
-  Serial.println("LOG: Done MOVE_Z2_UP");
-  if (responseClient && responseClient.connected()) {
-    responseClient.println("LOG: Done MOVE_Z2_UP");
-  }
+    logPrintln("LOG: Done MOVE_Z2_UP");
   activeCommand = "";
   return;
 
@@ -724,45 +640,27 @@ void processCommand(String command) {
     idx = space + 1;
   }
   if (steps <= 0) {
-    Serial.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z2_DOWN (continuous)...");
-    }
+    logPrintln("LOG: Starting MOVE_Z2_DOWN (continuous)...");
     runZAxis(false, 2, -1, speedToDelayUs(speed));
   } else {
-    Serial.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
-    }
+    logPrintln("LOG: Starting MOVE_Z2_DOWN for " + String(steps) + " steps...");
     runZAxis(false, 2, steps, speedToDelayUs(speed));
   }
-  Serial.println("LOG: Done MOVE_Z2_DOWN");
-  if (responseClient && responseClient.connected()) {
-    responseClient.println("LOG: Done MOVE_Z2_DOWN");
-  }
+    logPrintln("LOG: Done MOVE_Z2_DOWN");
   activeCommand = "";
   return;
 
   } else if (command == "CLEAR_ICE") {
-    Serial.println("LOG: Starting CLEAR_ICE...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting CLEAR_ICE...");
-    }
+    logPrintln("LOG: Starting CLEAR_ICE...");
     executeClearIceCommand();
-    Serial.println("LOG: Done CLEAR_ICE");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Done CLEAR_ICE");
-    }
+    logPrintln("LOG: Done CLEAR_ICE");
     activeCommand = "";
     
   } else if (command.startsWith("PRESET")) { // PRESET command with optional speed
     int startIdx = command.indexOf('(');
     int endIdx = command.indexOf(')', startIdx);
     if (startIdx == -1 || endIdx == -1 || endIdx <= startIdx + 1) {
-      Serial.println("ERROR: Invalid PRESET command format.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("ERROR: Invalid PRESET command format.");
-      }
+    logPrintln("ERROR: Invalid PRESET command format.");
       activeCommand = "";
       return;
     }
@@ -786,17 +684,11 @@ void processCommand(String command) {
     float deltaSteps = targetOffsetSteps - currentSteps;
 
     if (deltaSteps == 0) {
-      Serial.println("LOG: Already at target offset.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.println("LOG: Already at target offset.");
-      }
+    logPrintln("LOG: Already at target offset.");
       activeCommand = "";
       return;
     }
-    Serial.println("LOG: Starting PRESET command: Lifting Z2...");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Starting PRESET command: Lifting Z2...");
-    }
+    logPrintln("LOG: Starting PRESET command: Lifting Z2...");
     runZAxis(true, 2, -1, delayUs); // Lift Z2 upward.
     int stepCount = (int)fabsf(deltaSteps);
     if (deltaSteps > 0) {
@@ -810,26 +702,13 @@ void processCommand(String command) {
       }
       runXAxis(stepCount, false, delayUs); // Move left.
     } else {
-      Serial.print("LOG: Moving RIGHT ");
-      Serial.print(stepCount);
-      Serial.println(" steps.");
-      if (responseClient && responseClient.connected()) {
-        responseClient.print("LOG: Moving RIGHT ");
-        responseClient.print(stepCount);
-        responseClient.println(" steps.");
-      }
+    logPrintln("LOG: Moving RIGHT "+ stepCount + " steps.");
       runXAxis(stepCount, true, delayUs); // Move right.
     }
-    Serial.println("LOG: Lowering Z2 to complete PRESET command.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.println("LOG: Lowering Z2 to complete PRESET command.");
-    }
+    logPrintln("LOG: Lowering Z2 to complete PRESET command.");
     runZAxis(false, 2, -1, delayUs); // Lower Z2.
     activeCommand = "";
-    Serial.print("LOG: PRESET command done.");
-    if (responseClient && responseClient.connected()) {
-      responseClient.print("LOG: PRESET command done.");
-      }
+    logPrintln("LOG: PRESET command done.");
     
   }
 }
