@@ -203,10 +203,13 @@ bool isEncoderMoving() {
 
 
 void readEncoder() {
-  // Receive continuous angle and velocity from the Nano
-  if (Serial1.available() && Serial1.peek() == SYNC) {
-    Serial1.read();  // consume marker
-    // wait for 8 bytes (two floats) with timeout to avoid blocking
+  // Process all available encoder frames to keep offset current
+  const int frameSize = 1 + sizeof(float) * 2;  // sync + angle + velocity
+  while (Serial1.available() >= frameSize) {
+    // Search for the sync marker and discard any stray bytes
+    if (Serial1.read() != SYNC) {
+      continue;
+    }
     unsigned long start = millis();
     while (Serial1.available() < int(sizeof(float) * 2)) {
       if (millis() - start > ENCODER_READ_TIMEOUT_MS) {
@@ -316,6 +319,7 @@ void runZAxis(bool direction, int motor, int steps = -1, int stepDelayUs = 200) 
 
     digitalWrite(enablePin, HIGH);
   }
+}
 
 void runXAxis(int steps, bool direction, int stepDelayUs = 200) {
   
@@ -368,10 +372,21 @@ void executeClearIceCommand() {
   runXAxis(500, false); // Return home
 }
 
+// Checks if the command string is a single digit (from 1 to 9)
+/*calibrate*/
+bool isNumericCommand(String command) {
+  if (command.length() == 1) {
+    char c = command.charAt(0);
+    return (c >= '1' && c <= '9');
+  }
+  return false;
+}
+
+
 /*calibrate*/
 void processNumberCommand(String command) {
   int number = command.toInt();
-    logPrintln("Number " + number + " is recieved");
+  logPrintln(String("Number ") + number + " is received");
 }
 
 // Combined command validation and execution guard.
