@@ -12,13 +12,47 @@ import win32gui
 import win32con
 
 # Global event that will be set when a preset command completes.
-preset_homing_done_event = threading.Event()
+
+
+class CmdTracker:
+    def __init__(self, start_token: str, done_token: str):
+        self.start_token = start_token
+        self.done_token = done_token
+        self.event = threading.Event()
+        self.armed = False
+        self.started = False
+
+    def arm(self):
+        self.event.clear()
+        self.armed = True
+        self.started = False
+
+    def on_line(self, line: str):
+        if not self.armed:
+            return
+        if (not self.started) and (self.start_token in line):
+            self.started = True
+            return
+        if self.started and (self.done_token in line):
+            self.armed = False
+            self.event.set()
+
+
+TRACKERS = {
+    "HOME":      CmdTracker("Starting HOMING", "Done HOMING"),
+    "MOVE_DOWN": CmdTracker("Starting MOVE_DOWN", "Done MOVE_DOWN"),
+    "PRESET":    CmdTracker("Starting PRESET command", "PRESET command done"),
+}
+
+auto_stop_event = threading.Event()
+auto_thread = None
 
 # ------------------------ GLOBAL SETTINGS ------------------------
 teensy_ip = "10.0.7.80"  # Teensy IP address
 command_port = 65432           # Port for commands/responses
 status_port = 65433            # Port for continuous status updates
 response_port = 65434          # Port for responses (errors, logs, completions)
+steps_per_mm = 100.0          # change according to the dip switches on the driver (microstepping) and ball screw pitch
 
 # File where values modified from the Advanced_settings tab are persisted
 advanced_settings_file = "advanced_settings.json"
@@ -27,8 +61,8 @@ persistent_command_socket = None
 default_left_right_steps = 1000
 default_up_down_steps = 2000
 # Default movement speeds in mm/s
-default_x_speed = 50
-default_z_speed = 20
+default_x_speed = 60
+default_z_speed = 60
 
 # Default step between preset positions
 preset_offset_step = 500
@@ -93,7 +127,7 @@ else:
     profiles_data = {}
 
 # ------------------------ PERSISTENT COMMAND CONNECTION ------------------------
-def open_command_connection():
+'''def open_command_connection():
     global persistent_command_socket
     try:
         persistent_command_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -101,7 +135,19 @@ def open_command_connection():
         log_message("command connection established.")
     except socket.error as e:
         log_message(f"Error connecting to command port: {e}")
+        persistent_command_socket = None'''
+def open_command_connection():
+    global persistent_command_socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)   # or 1-3 seconds
+        s.connect((teensy_ip, command_port))
+        s.settimeout(None)
+        persistent_command_socket = s
+        log_message("command connection established.")
+    except socket.error as e:
         persistent_command_socket = None
+        log_message(f"Error connecting to command port: {e}")
 
 def send_command(command):
     global persistent_command_socket
@@ -135,7 +181,7 @@ def open_response_connection():
         log_message(f"Error connecting to response port: {e}")
         persistent_response_socket = None
 
-def listen_for_responses():
+'''def listen_for_responses():
     global persistent_response_socket
     if persistent_response_socket is None:
         open_response_connection()
@@ -156,8 +202,8 @@ def listen_for_responses():
             response_message = data.decode('utf-8')
             
             # Check for either the homing or preset completion replies.
-            if "Done HOMING" in response_message or "PRESET command done" in response_message:
-                preset_homing_done_event.set()
+            if "Done HOMING" in response_message  or "PRESET command done" in response_message or "Done MOVE_DOWN" in response_message:
+                preset_homing_movedown_done_event.set()
                 #log_message("Received movement confirmation from robot.")
             
             response_queue.put(response_message)
@@ -169,7 +215,64 @@ def listen_for_responses():
             except Exception:
                 pass
             persistent_response_socket = None
+            time.sleep(1)'''
+
+def listen_for_responses():
+    global persistent_response_socket
+    if persistent_response_socket is None:
+        open_response_connection()
+
+    buffer = ""
+    while True:
+        try:
+            if persistent_response_socket is None:
+                open_response_connection()
+
+            data = persistent_response_socket.recv(1024)
+            if not data:
+                log_message("Persistent response connection closed.")
+                try:
+                    persistent_response_socket.close()
+                except Exception:
+                    pass
+                persistent_response_socket = None
+                time.sleep(1)
+                continue
+
+            chunk = data.decode("utf-8", errors="replace")
+
+            # Normalize CR to LF
+            chunk = chunk.replace("\r", "\n")
+
+            # Force "LOG:" boundaries to behave like newlines even if glued:
+            # "....done.LOG: Starting..." -> "....done.\nLOG: Starting..."
+            chunk = chunk.replace("LOG:", "\nLOG:")
+
+            buffer += chunk
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Feed trackers
+                for tr in TRACKERS.values():
+                    tr.on_line(line)
+
+                # keep UI logging
+                response_queue.put(line)
+
+        except Exception as e:
+            log_message(f"Response error: {e}")
+            try:
+                if persistent_response_socket is not None:
+                    persistent_response_socket.close()
+            except Exception:
+                pass
+            persistent_response_socket = None
             time.sleep(1)
+
 
 # ------------------------ STATUS THREAD ------------------------
 def listen_for_status_updates():
@@ -193,16 +296,39 @@ def listen_for_status_updates():
                 '''log_message("Sent GET_STATUS request.")'''
                 
                 # Wait for the response from the Teensy
-                data = s.recv(1024)
+                '''data = s.recv(1024)
                 if not data:
                     raise Exception("Connection closed by status server.")
                 status_message = data.decode("utf-8").strip()
-                '''log_message(f"Received status: {status_message}")'''
+                #log_message(f"Received status: {status_message}")
                 # Place the received status message into the status_queue for processing
                 status_queue.put(status_message)
-                
                 # Adjust the polling interval as needed
-                time.sleep(0.5)
+                time.sleep(0.5)'''
+
+                buffer = ""
+
+                while True:
+                    s.sendall(b"GET_STATUS\n")
+
+                    data = s.recv(1024)
+                    if not data:
+                        raise Exception("Connection closed by status server.")
+
+                    chunk = data.decode("utf-8", errors="replace").replace("\r", "\n")
+                    buffer += chunk
+
+                    # Each status JSON is one line because Teensy uses println()
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if line:
+                            status_queue.put(line)
+
+                    time.sleep(0.5)
+
+                
+
         except Exception as e:
             # Update UI to reflect disconnected state
             root.after(0, update_connection_label, False)
@@ -581,9 +707,13 @@ def save_profile():
     if not profile_name:
         messagebox.showerror("Error", "Profile name cannot be empty")
         return
+    scenario_name = scenario_entry.get().strip()
+    if not scenario_name:
+        messagebox.showerror("Error", "Scenario cannot be empty")
+        return
     profiles_data[profile_name] = {
+        "scenario": scenario_entry.get().strip(),
         "offset": offset_entry_auto.get().strip(),
-        "speed": speed_entry_auto.get().strip(),
         "measure_time": measure_time_entry_auto.get().strip(),
         "num_measures": num_measures_entry_auto.get().strip()
     }
@@ -591,26 +721,62 @@ def save_profile():
     messagebox.showinfo("Profile Saved", f"Profile '{profile_name}' saved successfully.")
     profile_combo['values'] = list(profiles_data.keys())
 
-def load_profile(event):
+'''def load_profile(event):
     selected_profile = profile_combo.get()
     if selected_profile in profiles_data:
         offset_entry_auto.delete(0, tk.END)
         offset_entry_auto.insert(0, profiles_data[selected_profile].get("offset", ""))
-        speed_entry_auto.delete(0, tk.END)
-        speed_entry_auto.insert(0, profiles_data[selected_profile].get("speed", ""))
         measure_time_entry_auto.delete(0, tk.END)
         measure_time_entry_auto.insert(0, profiles_data[selected_profile].get("measure_time", ""))
+        num_measures_entry_auto.delete(0, tk.END)
+        num_measures_entry_auto.insert(0, profiles_data[selected_profile].get("num_measures", ""))'''
+
+def load_profile(event):
+    selected_profile = profile_combo.get()
+    if selected_profile in profiles_data:
+
+        # put the selected profile name into the Profile Name box
+        profile_name_entry.delete(0, tk.END)
+        profile_name_entry.insert(0, selected_profile)
+
+        scenario_entry.delete(0, tk.END)
+        scenario_entry.insert(0, profiles_data[selected_profile].get("scenario", ""))
+
+        offset_entry_auto.delete(0, tk.END)
+        offset_entry_auto.insert(0, profiles_data[selected_profile].get("offset", ""))
+
+        measure_time_entry_auto.delete(0, tk.END)
+        measure_time_entry_auto.insert(0, profiles_data[selected_profile].get("measure_time", ""))
+
         num_measures_entry_auto.delete(0, tk.END)
         num_measures_entry_auto.insert(0, profiles_data[selected_profile].get("num_measures", ""))
 
 
-def wait_for_preset_homing_done(timeout=15):
-    preset_homing_done_event.clear()  # Reset the event before waiting.
+def wait_for_done(cmd_type: str, timeout=30, poll_interval=0.1):
+    """
+    Wait for the specific command tracker to complete, but break out immediately
+    if auto_stop_event is set.
+    """
     log_message("Waiting for robot's movement confirmation...")
-    if not preset_homing_done_event.wait(timeout):
-        log_message("Timeout waiting for robot movement confirmation!")
-    else:
-        log_message("Robot movement confirmed.")
+    tr = TRACKERS[cmd_type]
+
+    deadline = time.time() + timeout
+    while True:
+        # Stop immediately if user requested stop
+        if auto_stop_event.is_set():
+            log_message("Stop requested. Exiting wait immediately.")
+            return False
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            log_message("Timeout waiting for robot movement confirmation!")
+            return False
+
+        # Wait in small chunks so we can check stop quickly
+        if tr.event.wait(timeout=min(poll_interval, remaining)):
+            log_message("Robot movement confirmed.")
+            return True
+
 
 TARGET_WINDOW_SUBSTRING = "Sensor Toolkit"
 
@@ -655,6 +821,7 @@ def measure_capacitance():
     window = bring_measurement_window_to_front()
     if not window:
         print("Measurement window not found; aborting measure_capacitance().")
+        log_message("Measurement window not found; aborting measure_capacitance().")
         return
 
     # Allow some time for the window to become active.
@@ -664,113 +831,207 @@ def measure_capacitance():
     try:
         measure_duration = float(measure_time_entry_auto.get())
     except Exception:
-        measure_duration = 2.0  # default measuring time
+        measure_duration = 5.0  # default measuring time
+
     print(f"Using measuring time: {measure_duration} seconds.")
 
     # ---- Acquisition 1 (1 MHz) ----
-    click_relative(window, 1160, 80)   # Step 1: Drop down
+    if should_stop():
+            return
+    click_relative(window, 970, 70)   # Step 1: Drop down
     #print("Acq1: Drop down clicked.")
-    click_relative(window, 1000, 230)  # Step 2: Select 1 MHz (corrected)
+    if should_stop():
+            return
+    click_relative(window, 850, 190)  # Step 2: Select 1 MHz (corrected)
     print("Acq1: 1 MHz selected.")
-    '''click_relative(window, 530, 200)   # (Optional) Step 3: Click "log"
-    print("Acq1: 'Log' clicked.")
-    click_relative(window, 555, 295)   # Step 4: Click name entry
-    print("Acq1: Name entry clicked.")
-    pyautogui.press('backspace')
-    pyautogui.typewrite("1")
-    print("Acq1: Typed '1'.")
-    click_relative(window, 900, 400)   # Step 6: Click OK
-    print("Acq1: OK clicked.")'''
-    click_relative(window, 450, 70)    # Step 7: Enable feed
+    if should_stop():
+            return
+    click_relative(window, 380, 60)    # Step 7: Enable feed
     #print("Acq1: Enable feed clicked.")
     print(f"Acq1: Waiting {measure_duration} seconds for measurement...")
     time.sleep(measure_duration)       # Step 8: Wait measuring time
-    click_relative(window, 450, 70)    # Step 9: Disable feed
+    if should_stop():
+            return
+    click_relative(window, 380, 60)    # Step 9: Disable feed
     #print("Acq1: Disable feed clicked.")
-    click_relative(window, 360, 70)    # Step 10: Stop acquisition
+    if should_stop():
+            return
+    click_relative(window, 300, 60)    # Step 10: Stop acquisition
     #print("Acq1: Stop acquisition clicked.")
 
     # ---- Acquisition 2 (2.5 MHz) ----
-    click_relative(window, 1160, 80)   # Step 11: Drop down
+    if should_stop():
+            return
+    click_relative(window, 970, 70)   # Step 11: Drop down
     #print("Acq2: Drop down clicked.")
-    click_relative(window, 1000, 245)  # Step 12: Select 2.5 MHz (x=1000, y=245)
+    if should_stop():
+            return
+    click_relative(window, 850, 205)  # Step 12: Select 2.5 MHz (x=1000, y=245)
     print("Acq2: 2.5 MHz selected.")
-    '''click_relative(window, 530, 200)   # Step 13: Click "log"
-    print("Acq2: 'Log' clicked.")
-    click_relative(window, 555, 295)   # Step 14: Click name entry
-    print("Acq2: Name entry clicked.")
-    pyautogui.press('backspace')
-    pyautogui.typewrite("2.5")
-    print("Acq2: Typed '2.5'.")
-    click_relative(window, 900, 400)   # Step 16: Click OK
-    print("Acq2: OK clicked.")'''
-    click_relative(window, 450, 70)    # Step 17: Enable feed
+    if should_stop():
+            return
+    click_relative(window, 380, 60)    # Step 17: Enable feed
     #print("Acq2: Enable feed clicked.")
     print(f"Acq2: Waiting {measure_duration} seconds for measurement...")
     time.sleep(measure_duration)       # Step 18: Wait measuring time
-    click_relative(window, 450, 70)    # Step 19: Disable feed
+    if should_stop():
+            return
+    click_relative(window, 380, 60)    # Step 19: Disable feed
     #print("Acq2: Disable feed clicked.")
-    click_relative(window, 360, 70)    # Step 20: Stop acquisition
+    if should_stop():
+            return
+    click_relative(window, 300, 60)    # Step 20: Stop acquisition
     #print("Acq2: Stop acquisition clicked.")
 
     print("Automated capacitance measurement sequence complete.")
 
-# --- INTEGRATION INTO THE EXISTING PYTHON APP ---
+def name_measurement():
+    window = bring_measurement_window_to_front()
+    
+    if not window:
+        print("Measurement window not found; aborting name_measurement().")
+        log_message("Measurement window not found; aborting name_measurement().")
+        return
 
-# Replace or modify your current start_measurement() and CMU control functions.
-# For example, if you originally had a function like this:
+    # Allow time for window activation
+    time.sleep(1)
 
+    # Get name from entry field
+    try:
+        saving_name = str(scenario_entry.get()).strip()
+        if not saving_name:
+            saving_name = "no_name_assigned"
+    except Exception:
+        saving_name = "no_name_assigned"
+
+    # Click sequence
+    click_relative(window, 615, 60)     # Log
+    print("Acq1: 'Log' clicked.")
+    click_relative(window, 640, 240)    # Browse
+    print("Acq1: Browse clicked.")
+    time.sleep(0.5)
+    pyautogui.press('backspace')        # Clear existing text
+    pyautogui.typewrite(saving_name)    # Automation name
+    click_relative(window, 885, 485)    # Save
+    print("Acq1: Save clicked.")
+    click_relative(window, 750, 330)    # OK
+    print("Acq1: Ok clicked.")
+    print(f"Measurement saved as: {saving_name}")
+    log_message(f"Measurement saved as: {saving_name}")\
+    
+# --- Helper: exit cleanly if Stop was pressed ---
+def should_stop():
+    if auto_stop_event.is_set():
+        log_message("Automatic sequence: STOPPED.")
+        return True
+    return False
+    
 def start_cmu_control():
     """
-    CMU control function that iterates through measurement steps.
-    For each measurement, it sends a movement command (HOME for the first,
-    then PRESET commands for subsequent positions), waits for robot confirmation,
-    and then triggers the capacitance measurement automation.
+    Automatic measurement sequence.
+    - Uses per-command trackers (HOME / MOVE_DOWN / PRESET)
+    - Honors Stop instantly even while waiting for DONE
     """
+    #see here why in the last preset it goes 2 
     try:
         num_measures = int(num_measures_entry_auto.get())
-        step_increment = int(offset_entry_auto.get())  # This is the movement step increment.
+        step_increment = int(float(offset_entry_auto.get()) * steps_per_mm)  # mm -> steps (int)
     except ValueError:
         log_message("Invalid numeric input for profile parameters.")
         return
 
-    current_offset = 0  # Starting position (home)
-    for measure_index in range(num_measures):
-        if measure_index == 0:
-            cmd = f"HOME v{default_x_speed}"
-            response = send_command(cmd)
-            log_message("Sent HOME command for first measurement.")
-            # Wait for homing to finish before continuing
-            wait_for_preset_homing_done()
-            # Lower Z2 before the very first measurement
-            send_command(f"MOVE_Z2_DOWN v{default_z_speed}")
-            log_message("Sent MOVE_Z2_DOWN after homing.")
-            time.sleep(1)
-        else:
-            current_offset += step_increment
-            cmd = f"PRESET({current_offset}) v{default_x_speed}"
-            response = send_command(cmd)
-            log_message(f"Sent command: {cmd} for measurement #{measure_index + 1}.")
-            # Wait until the Teensy confirms movement is complete.
-            wait_for_preset_homing_done()
+    current_offset_steps = 0
+    name_measurement()
 
-        # Now trigger the capacitance measurement automation.
+    for measure_index in range(num_measures):
+        if should_stop():
+            return
+
+        if measure_index == 0:
+            # -------- HOME --------
+            TRACKERS["HOME"].arm()
+            send_command(f"HOME v{default_x_speed}")
+            log_message("Sent HOME command for first measurement.")
+            if not wait_for_done("HOME", timeout=30, poll_interval=0.1):
+                # False means stop requested OR timeout
+                if auto_stop_event.is_set():
+                    log_message("Automatic sequence stopped by user during HOME.")
+                else:
+                    log_message("HOME wait timed out.")
+                return
+
+            if should_stop():
+                return
+
+            # -------- MOVE_DOWN --------
+            TRACKERS["MOVE_DOWN"].arm()
+            send_command(f"MOVE_DOWN v{default_z_speed}")
+            log_message("Sent MOVE_DOWN after homing.")
+            if not wait_for_done("MOVE_DOWN", timeout=30, poll_interval=0.1):
+                if auto_stop_event.is_set():
+                    log_message("Automatic sequence stopped by user during MOVE_DOWN.")
+                else:
+                    log_message("MOVE_DOWN wait timed out.")
+                return
+
+            time.sleep(1)
+
+        else:
+            # -------- PRESET --------
+            current_offset_steps += step_increment
+            cmd = f"PRESET({int(current_offset_steps)}) v{default_x_speed}"
+
+            TRACKERS["PRESET"].arm()
+            send_command(cmd)
+            log_message(f"Sent command: {cmd} for measurement #{measure_index + 1}.")
+
+            if not wait_for_done("PRESET", timeout=120, poll_interval=0.1):
+                if auto_stop_event.is_set():
+                    log_message("Automatic sequence stopped by user during PRESET.")
+                else:
+                    log_message("PRESET wait timed out.")
+                return
+            time.sleep(1)
         measure_capacitance()
 
-    # After all measurements, return to the home position
+    # -------- Final HOME --------
+    if should_stop():
+        return
+
+    TRACKERS["HOME"].arm()
     send_command(f"HOME v{default_x_speed}")
     log_message("Sent HOME command after measurement sequence.")
-    wait_for_preset_homing_done()
+    if not wait_for_done("HOME", timeout=30, poll_interval=0.1):
+        if auto_stop_event.is_set():
+            log_message("Automatic sequence stopped by user during final HOME.")
+        else:
+            log_message("Final HOME wait timed out.")
+        return
+
     log_message("CMU control measurement sequence complete.")
 
+
 def start_measurement():
+    global auto_thread
+
     selected_profile = profile_combo.get()
     if not selected_profile or selected_profile not in profiles_data:
         messagebox.showerror("Error", "Please select a valid profile to start")
         return
 
-    # Start the CMU control process in a separate thread.
-    threading.Thread(target=start_cmu_control, daemon=True).start()
+    if auto_thread is not None and auto_thread.is_alive():
+        log_message("Automatic sequence is already running.")
+        return
+
+    auto_stop_event.clear()
+    auto_thread = threading.Thread(target=start_cmu_control, daemon=True)
+    auto_thread.start()
+    log_message("Automatic sequence: STARTED.")
+
+def stop_measurement():
+    auto_stop_event.set()
+    send_command("STOP")
+    log_message("Automatic sequence: STOP requested.")
 
 '''def start_measurement():
     selected_profile = profile_combo.get()
@@ -778,7 +1039,6 @@ def start_measurement():
         messagebox.showerror("Error", "Please select a valid profile to start")
         return
     offset = offset_entry_auto.get()
-    speed = speed_entry_auto.get()
     measure_time = measure_time_entry_auto.get()
     num_measures = num_measures_entry_auto.get()
     cmd = f"START_MEASURE OFFSET={offset} SPEED={speed} MEASURE_TIME={measure_time} NUM_MEASURES={num_measures}"
@@ -871,25 +1131,34 @@ tk.Label(automatic_control_frame, text="Select Profile:").grid(row=0, column=0, 
 profile_combo = ttk.Combobox(automatic_control_frame, values=list(profiles_data.keys()), state="readonly")
 profile_combo.grid(row=0, column=1, padx=10, pady=5, sticky='ew')
 profile_combo.bind("<<ComboboxSelected>>", load_profile)
-tk.Button(automatic_control_frame, text="Start", command=start_measurement).grid(row=0, column=2, padx=10, pady=5, sticky='ew')
+tk.Button(automatic_control_frame, text="Start", command=start_measurement)\
+    .grid(row=0, column=2, padx=10, pady=5, sticky='ew')
+
+tk.Button(automatic_control_frame, text="Stop", command=stop_measurement)\
+    .grid(row=0, column=3, padx=10, pady=5, sticky='ew')
 
 parameters_frame = tk.LabelFrame(automatic_control_frame, text="Profile Parameters")
 parameters_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky='nsew')
 tk.Label(parameters_frame, text="Profile Name:").grid(row=0, column=0, padx=10, pady=5, sticky='w')
 profile_name_entry = tk.Entry(parameters_frame)
 profile_name_entry.grid(row=0, column=1, padx=10, pady=5, sticky='ew')
-tk.Label(parameters_frame, text="Default Offset:").grid(row=1, column=0, padx=10, pady=5, sticky='w')
+
+tk.Label(parameters_frame, text="Scenario:").grid(row=1, column=0, padx=10, pady=5, sticky='w')
+scenario_entry = tk.Entry(parameters_frame)
+scenario_entry.grid(row=1, column=1, padx=10, pady=5, sticky='ew')
+
+tk.Label(parameters_frame, text="Default Offset (mm):").grid(row=2, column=0, padx=10, pady=5, sticky='w')
 offset_entry_auto = tk.Entry(parameters_frame)
-offset_entry_auto.grid(row=1, column=1, padx=10, pady=5, sticky='ew')
-tk.Label(parameters_frame, text="Speed:").grid(row=2, column=0, padx=10, pady=5, sticky='w')
-speed_entry_auto = tk.Entry(parameters_frame)
-speed_entry_auto.grid(row=2, column=1, padx=10, pady=5, sticky='ew')
-tk.Label(parameters_frame, text="Measuring Time:").grid(row=3, column=0, padx=10, pady=5, sticky='w')
+offset_entry_auto.grid(row=2, column=1, padx=10, pady=5, sticky='ew')
+
+tk.Label(parameters_frame, text="Measuring Time (s):").grid(row=3, column=0, padx=10, pady=5, sticky='w')
 measure_time_entry_auto = tk.Entry(parameters_frame)
 measure_time_entry_auto.grid(row=3, column=1, padx=10, pady=5, sticky='ew')
+
 tk.Label(parameters_frame, text="Number of Measures:").grid(row=4, column=0, padx=10, pady=5, sticky='w')
 num_measures_entry_auto = tk.Entry(parameters_frame)
 num_measures_entry_auto.grid(row=4, column=1, padx=10, pady=5, sticky='ew')
+
 tk.Button(parameters_frame, text="Save Profile", command=save_profile)\
     .grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky='ew')
 
@@ -900,7 +1169,7 @@ for i in range(3):
     Advanced_settings_frame.columnconfigure(i, weight=1)
 
 # Row 0: Preset Offset Step
-tk.Label(Advanced_settings_frame, text="Preset Offset Step:")\
+tk.Label(Advanced_settings_frame, text="Preset Offset Step(steps/100 = mm):")\
     .grid(row=0, column=0, padx=10, pady=10, sticky="w")
 preset_offset_entry = tk.Entry(Advanced_settings_frame)
 preset_offset_entry.insert(0, str(preset_offset_step))
@@ -1028,14 +1297,16 @@ clear_log_button = tk.Button(log_frame, text="Clear The Logger", command=clear_l
 clear_log_button.pack(side=tk.TOP, pady=5, anchor='center')
 
 # Logger widget below the button
-combined_log = scrolledtext.ScrolledText(log_frame, height=15, wrap=tk.WORD)
+combined_log = scrolledtext.ScrolledText(log_frame, height=25, wrap=tk.WORD)
 combined_log.pack(fill='both', expand=True)
 
 # ------------------------ START UP ------------------------
 root.after(100, process_status_messages)
 root.after(100, process_response_messages)
-open_command_connection()
-root.after(200, lambda: threading.Thread(target=listen_for_status_updates, daemon=True).start())
-root.after(200, lambda: threading.Thread(target=listen_for_responses, daemon=True).start())
+def startup_connections():
+    threading.Thread(target=open_command_connection, daemon=True).start()
+    threading.Thread(target=listen_for_status_updates, daemon=True).start()
+    threading.Thread(target=listen_for_responses, daemon=True).start()
 
+root.after(200, startup_connections)
 root.mainloop()
