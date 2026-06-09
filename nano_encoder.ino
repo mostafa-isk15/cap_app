@@ -23,12 +23,15 @@ uint16_t readRawAngle() {
 
 void setup() {
   Serial.begin(115200);    // USB debug
-  Serial1.begin(9600);   // TX1 → Teensy RX1
+  Serial1.begin(115200);   // TX1 → Teensy RX1
   Wire.begin();
+
   unsigned long waitStart = millis();
-  while (!Serial && (millis() - waitStart < 3000)) {
-    ; // wait up to 3 seconds for a host connection
+  while (!Serial && (millis() - waitStart < 1000)) {
+    ; // wait up to 1 second for Serial Monitor
   }
+
+  Serial.println("Nano initialized.");
   lastRaw   = readRawAngle();
   lastTotal = lastRaw * SCALE;
   lastTime  = micros();
@@ -48,7 +51,14 @@ void loop() {
   float dt = (now - lastTime) * 1e-6f;
   angularvelocity = (totalAngle - lastTotal) / dt;
 
-  // send sync + two floats
+  // Debug output to Serial Monitor
+  Serial.print("Angle: ");
+  Serial.print(totalAngle, 2);
+  Serial.print(" deg\tVelocity: ");
+  Serial.print(angularvelocity, 2);
+  Serial.println(" deg/s");
+
+  // Send to Teensy
   Serial1.write(0xFF);  
   Serial1.write((uint8_t*)&totalAngle,    sizeof(totalAngle));
   Serial1.write((uint8_t*)&angularvelocity, sizeof(angularvelocity));
@@ -56,5 +66,6 @@ void loop() {
   lastRaw   = raw;
   lastTotal = totalAngle;
   lastTime  = now;
+
   delay(100);
 }
